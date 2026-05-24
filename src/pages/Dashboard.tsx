@@ -11,14 +11,12 @@ import {
   Wrench, 
   Clock, 
   FileWarning, 
-  Wallet, 
   CheckCircle2, 
   AlertOctagon,
   ArrowRight
 } from "lucide-react";
 import { format, isBefore, addDays } from "date-fns";
 import { useMaintenance } from "@/hooks/useMaintenance";
-import { usePayments } from "@/hooks/usePayments";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -28,27 +26,16 @@ export default function Dashboard() {
   const { floors, rooms } = useBuilding();
   const { tenants } = useTenants();
   const { maintenanceLogs } = useMaintenance();
-  const { payments } = usePayments();
   const [isUnitMapExpanded, setIsUnitMapExpanded] = useState(false);
 
   const totalUnits = rooms.data?.length || 0;
 
-  // Financial Calculations
-  const totalRent = rooms.data?.reduce((acc, r) => acc + (r.rent_price || 0), 0) || 0;
-  const collectedAmount = payments.data?.filter(p => p.status === "paid").reduce((acc, p) => acc + p.amount, 0) || 0;
-  const pendingPayments = payments.data?.filter(p => p.status === "pending") || [];
-  const pendingAmount = pendingPayments.reduce((acc, p) => acc + p.amount, 0) || 0;
-  
-  const overduePayments = pendingPayments.filter(p => isBefore(new Date(p.due_date), new Date()));
-  const overdueAmount = overduePayments.reduce((acc, p) => acc + p.amount, 0) || 0;
-  
-  const collectedPercent = totalRent > 0 ? Math.round((collectedAmount / totalRent) * 100) : 0;
-
   // Activity & Expirations
-  const recentTenants = tenants.data?.slice(0, 5) || [];
-  const upcomingExpirations = tenants.data?.filter(t => t.lease_end && isBefore(new Date(t.lease_end), addDays(new Date(), 30))) || [];
+  const activeTenants = tenants.data?.filter(t => t.status !== 'archived') || [];
+  const recentTenants = activeTenants.slice(0, 5);
+  const upcomingExpirations = activeTenants.filter(t => t.lease_end && isBefore(new Date(t.lease_end), addDays(new Date(), 30)));
   const activeMaintenance = maintenanceLogs.data?.filter(l => l.status !== "Completed") || [];
-  const airbnbCount = tenants.data?.filter(t => t.source === 'airbnb').length || 0;
+  const airbnbCount = activeTenants.filter(t => t.source === 'airbnb').length;
 
   const getUnitNumber = (tenantId: string) => {
     const tenant = tenants.data?.find(t => t.id === tenantId);
@@ -62,7 +49,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-10">
       {/* Top Level Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="card-professional p-6 flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Units</p>
@@ -93,17 +80,6 @@ export default function Dashboard() {
           </div>
           <div className="w-12 h-12 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 border border-amber-100">
             <Wrench className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="card-professional p-6 flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Monthly Revenue</p>
-            <h2 className="text-2xl font-bold text-slate-900">ETB {collectedAmount.toLocaleString()}</h2>
-            <p className="text-[10px] font-bold text-emerald-600 uppercase">{collectedPercent}% collected</p>
-          </div>
-          <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 border border-emerald-100">
-            <Wallet className="w-6 h-6" />
           </div>
         </div>
       </div>
@@ -195,39 +171,7 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* Recent Payments */}
-          <section className="card-professional overflow-hidden">
-            <div className="p-6 border-b border-border flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Recent Payments</h3>
-              <Link to="/payments" className="text-[10px] font-bold text-primary uppercase hover:underline">View All</Link>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="py-3 px-6 text-[10px] font-bold uppercase text-slate-500 tracking-wider">Tenant</th>
-                    <th className="py-3 px-6 text-[10px] font-bold uppercase text-slate-500 tracking-wider">Unit</th>
-                    <th className="py-3 px-6 text-[10px] font-bold uppercase text-slate-500 tracking-wider">Amount</th>
-                    <th className="py-3 px-6 text-[10px] font-bold uppercase text-slate-500 tracking-wider text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {payments.data?.slice(0, 5).map(payment => (
-                    <tr key={payment.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-4 px-6 text-xs font-bold text-slate-900">{(payment as any).tenants?.name}</td>
-                      <td className="py-4 px-6 text-xs font-semibold text-slate-500">Unit {getUnitNumber(payment.tenant_id)}</td>
-                      <td className="py-4 px-6 text-xs font-bold text-slate-900">ETB {payment.amount.toLocaleString()}</td>
-                      <td className="py-4 px-6 text-right">
-                        <Badge variant="outline" className={`${payment.status === 'paid' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'} border-none text-[8px] font-bold uppercase`}>
-                          {payment.status}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+
         </div>
 
         {/* Sidebar Insights */}

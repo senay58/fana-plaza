@@ -6,7 +6,6 @@ import {
   Building2, 
   Users, 
   Wrench, 
-  Wallet, 
   Bell, 
   Settings, 
   ChevronLeft, 
@@ -14,7 +13,8 @@ import {
   LayoutGrid, 
   X,
   LogOut,
-  Building
+  Building,
+  Wallet
 } from "lucide-react";
 
 export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
@@ -31,8 +31,8 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
     { to: "/", label: "Dashboard", icon: BarChart3 },
     { to: "/units", label: "Properties", icon: Building2 },
     { to: "/tenants", label: "Tenants", icon: Users },
-    { to: "/maintenance", label: "Maintenance", icon: Wrench },
     { to: "/payments", label: "Payments", icon: Wallet },
+    { to: "/maintenance", label: "Maintenance", icon: Wrench },
   ];
 
   const bottomItems = [

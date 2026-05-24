@@ -13,43 +13,32 @@ export function useAutoNotifications() {
   useEffect(() => {
     if (!tenants.data || !settings.data) return;
 
-    const checkLeases = async () => {
+    const checkEvents = async () => {
       const mode = settings.data?.lease_expiry_days || 1; // 1 = Once, 2 = Twice, 0 = Disabled
       if (mode === 0) return;
 
       const today = startOfDay(new Date());
 
+      // 1. Check Lease Expirations
       for (const tenant of tenants.data) {
-        if (!tenant.lease_end) continue;
-
+        if (tenant.status === 'archived' || !tenant.lease_end) continue;
         const leaseEnd = startOfDay(new Date(tenant.lease_end));
         const daysLeft = differenceInDays(leaseEnd, today);
-        
         let shouldTrigger = false;
         if (daysLeft === 5) shouldTrigger = true;
         if (mode === 2 && daysLeft === 3) shouldTrigger = true;
 
         if (shouldTrigger) {
           const title = `Lease Expiration Warning: ${tenant.name}`;
-          const message = `The lease for unit assignment involving ${tenant.name} is scheduled to expire in ${daysLeft} days (${leaseEnd.toLocaleDateString()}). Please initiate SMS renewal protocols.`;
-
-          // Check if we already sent THIS specific day-bracket notification
-          const existing = notifications.data?.find(
-            n => n.title.includes(tenant.name) && n.message.includes(`in ${daysLeft} days`)
-          );
-
+          const message = `The lease for unit assignment involving ${tenant.name} is scheduled to expire in ${daysLeft} days.`;
+          const existing = notifications.data?.find(n => n.title === title && n.message === message);
           if (!existing) {
-            await supabase.from("notifications").insert([{
-              title,
-              message,
-              type: "warning",
-              is_read: false
-            }]);
+            await supabase.from("notifications").insert([{ title, message, type: "warning", is_read: false }]);
           }
         }
       }
     };
 
-    checkLeases();
+    checkEvents();
   }, [tenants.data, settings.data, notifications.data]);
 }

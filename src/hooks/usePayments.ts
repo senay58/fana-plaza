@@ -13,6 +13,7 @@ export type Payment = {
   staff_responsible?: string;
   tenants?: {
     name: string;
+    contact_number?: string;
   };
 };
 
@@ -22,7 +23,7 @@ export function usePayments() {
   const payments = useQuery({
     queryKey: ["payments"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("payments").select("*, tenants(name)").order("due_date", { ascending: false });
+      const { data, error } = await supabase.from("payments").select("*, tenants(name, contact_number)").order("due_date", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -152,7 +153,7 @@ export function usePayments() {
           
           return {
             tenant_id: t.id,
-            amount: (t.rooms?.rent_price || 0) * (isCommercial ? 3 : 1),
+            amount: (t.rooms?.rent_price || 0) * 1, // Monthly billing for all tenant types
             status: "pending",
             due_date: targetDate
           };

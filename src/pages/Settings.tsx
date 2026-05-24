@@ -1,6 +1,6 @@
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
-import { Shield, Lock, UserCircle, Gauge, MessageSquare } from "lucide-react";
+import { Shield, Lock, UserCircle, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import { useSettings } from "@/hooks/useSettings";
 import { useTenants } from "@/hooks/useTenants";
@@ -13,27 +13,16 @@ export default function Settings() {
     username: "",
     passcode: "",
     grace_period: 7,
-    lease_expiry_days: 1 // We use this as the flag: 1 = Once, 2 = Twice, 0 = Disabled
+    lease_expiry_days: 1, // We use this as the flag: 1 = Once, 2 = Twice, 0 = Disabled
+    sms_provider_number: "",
+    sms_provider_url: "",
+    sms_provider_key: "",
+    sms_template_5_days: "",
+    sms_template_3_days: "",
+    sms_template_deadline: ""
   });
   const { tenants } = useTenants();
-  const [globalSms, setGlobalSms] = useState("");
 
-  const handleGlobalSms = () => {
-    if (!tenants.data || tenants.data.length === 0) {
-      toast.error("No tenants found.");
-      return;
-    }
-    const numbers = tenants.data.map(t => t.contact_number).filter(Boolean);
-    if (numbers.length === 0) {
-      toast.error("No valid tenant phone numbers linked.");
-      return;
-    }
-    // Note: iOS uses '&body=' while android uses '?body=', standardizing with ?body= which works on most modern devices. Android may need sms:num1;num2
-    // We will use standard comma separation.
-    const numberString = numbers.join(",");
-    window.location.href = `sms:${numberString}?body=${encodeURIComponent(globalSms)}`;
-    setGlobalSms("");
-  };
 
   useEffect(() => {
     if (settings.data) {
@@ -41,7 +30,13 @@ export default function Settings() {
         username: settings.data.username,
         passcode: settings.data.passcode,
         grace_period: settings.data.grace_period,
-        lease_expiry_days: settings.data.lease_expiry_days || 1
+        lease_expiry_days: settings.data.lease_expiry_days || 1,
+        sms_provider_number: settings.data.sms_provider_number || "",
+        sms_provider_url: settings.data.sms_provider_url || "",
+        sms_provider_key: settings.data.sms_provider_key || "",
+        sms_template_5_days: settings.data.sms_template_5_days || "Dear {name}, you have {days} days to make your payment. Please ensure timely settlement to avoid penalties.",
+        sms_template_3_days: settings.data.sms_template_3_days || "Dear {name}, you have {days} days remaining to make your payment. Please secure your unit immediately.",
+        sms_template_deadline: settings.data.sms_template_deadline || "Dear {name}, today is the deadline for your rent payment. Please make your payment today to avoid a late fee."
       });
     }
   }, [settings.data]);
@@ -129,7 +124,7 @@ export default function Settings() {
                 />
               </div>
               <div className="space-y-2.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Auto SMS Frequency</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Lease Expiry Warning</label>
                 <Select 
                   value={String(formData.lease_expiry_days)} 
                   onValueChange={(val) => setFormData(prev => ({ ...prev, lease_expiry_days: Number(val) }))}
@@ -157,35 +152,7 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Global SMS Broadcast */}
-      <div className="card-professional bg-white">
-          <div className="p-8 border-b border-border flex items-center gap-4">
-            <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
-              <MessageSquare className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Global SMS Broadcast</h3>
-              <p className="text-[10px] font-bold text-slate-500 mt-0.5 uppercase tracking-widest">Send texts to all assigned residents instantly</p>
-            </div>
-          </div>
-          <div className="p-8 space-y-6">
-            <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Broadcast Message Body</label>
-              <textarea 
-                value={globalSms}
-                onChange={(e) => setGlobalSms(e.target.value)}
-                placeholder="Type your facility-wide announcement here..."
-                className="w-full p-4 bg-slate-50 border border-border rounded-xl font-bold text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-all min-h-[120px]"
-              />
-            </div>
-            <Button 
-              className="w-full h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]" 
-              onClick={handleGlobalSms}
-            >
-              Broadcast Global Notification
-            </Button>
-          </div>
-      </div>
+
     </div>
   );
 }

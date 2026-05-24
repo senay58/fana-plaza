@@ -1,648 +1,405 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { usePayments, Payment } from "@/hooks/usePayments";
-import { useSettings } from "@/hooks/useSettings";
 import { useTenants } from "@/hooks/useTenants";
+import { useBuilding } from "@/hooks/useBuilding";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { 
-  Wallet, Search, CheckCircle2, Clock, ArrowUpRight, HelpCircle, 
-  BarChart3, Users, Receipt, AlertTriangle, Building, FileText, ArrowRight,
-  PlusCircle, RefreshCw, Printer, Download, X as CloseIcon, Check, Trash2
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Search,
+  Wallet,
+  CheckCircle2,
+  Clock,
+  Trash2,
+  TrendingUp,
+  Sparkles,
+  DollarSign,
+  Calendar,
+  User,
+  CreditCard
 } from "lucide-react";
+import { format } from "date-fns";
 import { toast } from "sonner";
-import { format, isBefore, addDays, differenceInDays, startOfDay } from "date-fns";
 
 export default function Payments() {
   const { payments, updatePaymentStatus, generateMonthlyPayments, deletePayment } = usePayments();
-  const { tenants, renewLease } = useTenants();
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("overview");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [recentlyAuthorized, setRecentlyAuthorized] = useState<string | null>(null);
-  const [selectedReceipt, setSelectedReceipt] = useState<Payment | null>(null);
+  const { tenants } = useTenants();
+  const { rooms } = useBuilding();
 
-  const handleGenerateInvoices = async () => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "paid" | "pending">("all");
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [isReconcileOpen, setIsReconcileOpen] = useState(false);
+  const [reconcileData, setReconcileData] = useState({
+    method: "Bank Transfer",
+    staff: "",
+  });
+
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Sync / Auto-generate monthly payments
+  const handleGeneratePayments = async () => {
+    setIsGenerating(true);
     try {
       const result = await generateMonthlyPayments.mutateAsync();
-      toast.success(result.message);
-    } catch (e: any) {
-      console.error(e);
-      toast.error(`Error: ${e?.message || "Failed to generate invoices."}`);
-    }
-  };
-
-  const handleStatusToggle = async (payment: Payment, newStatus: "paid" | "pending") => {
-    try {
-      await updatePaymentStatus.mutateAsync({ 
-        id: payment.id, 
-        status: newStatus,
-        method: newStatus === 'paid' ? 'Bank Transfer' : undefined,
-        staff: newStatus === 'paid' ? 'System' : undefined
-      });
-      
-      if (newStatus === 'paid') {
-        setRecentlyAuthorized(payment.id);
-        toast.success(`Settlement Authorized.`, {
-          description: "Would you like to extend the resident's lease now?",
-          duration: 6000
-        });
-      } else {
-        setRecentlyAuthorized(null);
-        toast.success(`Invoice reverted to pending.`);
-      }
+      toast.success(result.message || "Ledger synchronized successfully.");
     } catch (error: any) {
-      console.error("Payment Update Error:", error);
-      toast.error(`Database Error: ${error?.message || "Unknown error occurred"}`, {
-        duration: 10000
-      });
+      toast.error(error.message || "Failed to generate invoices.");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
-  const handleQuickRenew = async (tenantId: string, duration: 'days' | 'weeks' | 'months', unit: number) => {
+  const handleReconcileSubmit = async () => {
+    if (!selectedPayment) return;
     try {
-      await renewLease.mutateAsync({ id: tenantId, duration, unit });
-      toast.success(`Lease extended by ${unit} ${duration}.`);
-      setRecentlyAuthorized(null);
-    } catch (e) {
-      toast.error("Renewal failed.");
+      await updatePaymentStatus.mutateAsync({
+        id: selectedPayment.id,
+        status: "paid",
+        method: reconcileData.method,
+        staff: reconcileData.staff || undefined,
+      });
+      toast.success("Payment successfully reconciled.");
+      setIsReconcileOpen(false);
+      setSelectedPayment(null);
+      setReconcileData({ method: "Bank Transfer", staff: "" });
+    } catch (error: any) {
+      toast.error(error.message || "Reconciliation failed.");
     }
   };
 
-  const { settings } = useSettings();
-  const gracePeriod = settings.data?.grace_period || 0;
-
-  const getPenaltyMultiplier = (dateStr: string) => {
-    const daysPastDue = differenceInDays(new Date(), new Date(dateStr));
-    if (daysPastDue <= gracePeriod) return 1;
-    if (daysPastDue <= gracePeriod + 7) return 1.05;
-    return 1.20;
+  const handleDelete = async (id: string) => {
+    if (confirm("Are you sure you want to delete this payment record? This cannot be undone.")) {
+      try {
+        await deletePayment.mutateAsync(id);
+        toast.success("Payment record deleted.");
+      } catch (error: any) {
+        toast.error(error.message || "Failed to delete record.");
+      }
+    }
   };
 
-  const getPenaltyLabel = (dateStr: string) => {
-    const mult = getPenaltyMultiplier(dateStr);
-    if (mult === 1.05) return "5% Late Fee";
-    if (mult === 1.20) return "20% Late Fee";
-    return "";
+  const getTenantRoomInfo = (tenantId: string) => {
+    const tenant = tenants.data?.find((t) => t.id === tenantId);
+    if (!tenant) return { name: "Unknown Tenant", roomNumber: "N/A" };
+    const room = rooms.data?.find((r) => r.id === tenant.room_id);
+    return {
+      name: tenant.name,
+      roomNumber: room ? room.number : "Unassigned",
+    };
   };
 
-  // Financial Calculation Engine
-  const totalRevenue = payments.data?.filter(p => p.status === "paid").reduce((acc, p) => acc + p.amount, 0) || 0;
-  const pendingRevenue = payments.data?.filter(p => p.status === "pending").reduce((acc, p) => acc + (p.amount * getPenaltyMultiplier(p.due_date)), 0) || 0;
-  const collectedPercent = payments.data?.length ? Math.round((payments.data.filter(p => p.status === "paid").length / payments.data.length) * 100) : 0;
+  // Calculations
+  const paymentList = payments.data || [];
+  const paidPayments = paymentList.filter((p) => p.status === "paid");
+  const pendingPayments = paymentList.filter((p) => p.status === "pending");
 
-  const filteredPayments = payments.data?.filter(p => 
-    p.tenants?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const totalCollected = paidPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const totalPending = pendingPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const collectionRate =
+    totalCollected + totalPending > 0
+      ? Math.round((totalCollected / (totalCollected + totalPending)) * 100)
+      : 0;
 
-  const isOverdue = (dateStr: string) => {
-    const d = startOfDay(new Date(dateStr));
-    return !isBefore(startOfDay(new Date()), d);
-  };
-
-  const today = startOfDay(new Date());
-  
-  // Unified Alert Engine: Combine Payments and Lease Expirations
-  const paymentAlerts = (payments.data?.filter(p => p.status === "pending") || []).map(p => ({
-    id: p.id,
-    type: "payment",
-    name: p.tenants?.name || "Unknown Tenant",
-    date: p.due_date,
-    amount: p.amount,
-    overdue: !isBefore(today, startOfDay(new Date(p.due_date))),
-    original: p
-  }));
-
-  const leaseAlerts = (tenants.data || []).filter(t => t.lease_end).map(t => {
-    const end = startOfDay(new Date(t.lease_end!));
-    const isPast = !isBefore(today, end);
-    const isNear = isBefore(end, addDays(today, 7));
+  // Filter lists
+  const filteredPayments = paymentList.filter((p) => {
+    const tenantInfo = getTenantRoomInfo(p.tenant_id);
+    const matchesSearch =
+      tenantInfo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tenantInfo.roomNumber.toLowerCase().includes(searchTerm.toLowerCase());
     
-    if (isPast || isNear) {
-      return {
-        id: `lease-${t.id}`,
-        type: "lease",
-        name: t.name,
-        date: t.lease_end!,
-        amount: 0,
-        overdue: isPast,
-        original: t
-      };
-    }
-    return null;
-  }).filter(Boolean) as any[];
+    const matchesStatus =
+      statusFilter === "all" ? true : p.status === statusFilter;
 
-  const combinedAlerts = [...paymentAlerts, ...leaseAlerts];
-  const overdueList = combinedAlerts.filter(a => a.overdue);
-  const upcomingList = combinedAlerts.filter(a => !a.overdue && isBefore(new Date(a.date), addDays(today, 8)));
+    return matchesSearch && matchesStatus;
+  });
 
-  if (payments.isLoading || tenants.isLoading) return <div className="p-20 text-center text-slate-500 font-black uppercase tracking-[0.4em] animate-pulse">Syncing Financial Ledger...</div>;
-
-  const menuItems = [
-    { id: "overview", label: "Financial Overview", icon: <BarChart3 className="w-4 h-4" /> },
-    { id: "invoices", label: "Monthly Invoices", icon: <Receipt className="w-4 h-4" /> },
-    { id: "registry", label: "Tenant History", icon: <Users className="w-4 h-4" /> },
-    { id: "alerts", label: "Overdue & Alerts", icon: <AlertTriangle className="w-4 h-4" /> }
-  ];
+  if (payments.isLoading || tenants.isLoading || rooms.isLoading) {
+    return (
+      <div className="p-12 text-center text-slate-400 font-bold uppercase tracking-[0.2em] animate-pulse">
+        Retrieving Payment Ledgers...
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8">
-      {/* Structural Sidebar */}
-      <div className="w-full lg:w-64 shrink-0 space-y-6">
+    <div className="space-y-10">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900 px-1">Finances</h2>
-          <p className="text-xs text-slate-500 px-1 mt-1">Plaza payment registry</p>
-        </div>
-        
-        <div className="flex flex-col gap-1">
-          {menuItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
-                activeTab === item.id 
-                  ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/20' 
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              {item.icon}
-              {item.label}
-              {item.id === 'alerts' && overdueList.length > 0 && (
-                <span className="ml-auto bg-rose-500 text-white w-4 h-4 rounded-full flex items-center justify-center text-[8px]">{overdueList.length}</span>
-              )}
-            </button>
-          ))}
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 px-1">Payments & Billing</h2>
+          <p className="text-sm text-slate-500 px-1">
+            Track rental invoices, process receipts and manage financial transactions
+          </p>
         </div>
 
-        {/* Mini stats block on sidebar */}
-        <div className="p-5 bg-slate-50 rounded-xl border border-slate-100 space-y-3">
-           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Efficiency</p>
-           <div className="flex items-end gap-2">
-             <h4 className="text-2xl font-black text-slate-900 leading-none">{collectedPercent}%</h4>
-           </div>
-           <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-             <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${collectedPercent}%` }} />
-           </div>
+        <Button
+          onClick={handleGeneratePayments}
+          disabled={isGenerating}
+          className="h-10 px-4 bg-black text-white hover:bg-slate-800 rounded-lg font-bold text-xs flex gap-2 shadow-lg transition-all"
+        >
+          <Sparkles className="w-4 h-4" />
+          {isGenerating ? "Syncing Registry..." : "Generate Monthly Invoices"}
+        </Button>
+      </div>
+
+      {/* Metrics Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="card-professional p-6 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Collected</p>
+            <h2 className="text-2xl font-bold text-slate-900">
+              ${totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h2>
+            <p className="text-[10px] font-bold text-emerald-600 uppercase">Settled Invoices</p>
+          </div>
+          <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 border border-emerald-100">
+            <DollarSign className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="card-professional p-6 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Receivables</p>
+            <h2 className="text-2xl font-bold text-rose-600">
+              ${totalPending.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h2>
+            <p className="text-[10px] font-bold text-rose-500 uppercase">Outstanding Balance</p>
+          </div>
+          <div className="w-12 h-12 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 border border-rose-100">
+            <Clock className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="card-professional p-6 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Collection Rate</p>
+            <h2 className="text-2xl font-bold text-slate-900">{collectionRate}%</h2>
+            <p className="text-[10px] font-bold text-indigo-600 uppercase">Invoiced vs Received</p>
+          </div>
+          <div className="w-12 h-12 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
+            <TrendingUp className="w-6 h-6" />
+          </div>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 min-w-0">
-        
-        {/* OVERVIEW TAB */}
-        {activeTab === "overview" && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
-            <div className="grid gap-6 md:grid-cols-2">
-              <div className="card-professional p-8 bg-white border-b-4 border-emerald-500">
-                <div className="space-y-1">
-                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Total Collected</p>
-                   <h2 className="text-4xl font-black tracking-tighter text-slate-900 mt-1">ETB {totalRevenue.toLocaleString()}</h2>
-                </div>
-                <div className="mt-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 w-fit px-3 py-1.5 rounded-lg border border-emerald-100">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Optimal Collection</span>
-                </div>
-              </div>
-
-              <div className="card-professional p-8 bg-white border-b-4 border-rose-500">
-                <div className="space-y-1">
-                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Outstanding Rent</p>
-                   <h2 className="text-4xl font-black tracking-tighter text-slate-900 mt-1">ETB {pendingRevenue.toLocaleString()}</h2>
-                </div>
-                <div className="mt-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-rose-600 bg-rose-50 w-fit px-3 py-1.5 rounded-lg border border-rose-100">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{paymentAlerts.length} Pending items</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Action */}
-            <div className="bg-slate-900 text-white rounded-2xl p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl">
-               <div className="space-y-2 max-w-md">
-                 <h3 className="text-lg font-black uppercase tracking-widest text-emerald-400">Systemic Billing</h3>
-                 <p className="text-xs text-slate-400 font-semibold leading-relaxed">Execute the auto-generation function to distribute monthly invoices across all active tenant profiles based on unit rent rates.</p>
-               </div>
-               <Button 
-                onClick={handleGenerateInvoices} 
-                disabled={generateMonthlyPayments.isPending}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase tracking-[0.15em] text-xs h-12 rounded-xl px-8 shadow-lg shadow-emerald-500/20"
-              >
-                {generateMonthlyPayments.isPending ? "Spooling..." : "Generate Monthlies"}
-              </Button>
-            </div>
+      {/* Filter / Search Bar */}
+      <div className="card-professional p-6">
+        <div className="flex flex-col sm:flex-row items-center gap-4 justify-between">
+          <div className="relative flex-1 w-full sm:max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              placeholder="Search by tenant name or unit number..."
+              className="pl-9 h-10 bg-white border-border rounded-lg text-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
-        )}
 
-        {/* INVOICES TAB */}
-        {activeTab === "invoices" && (
-          <div className="card-professional bg-white overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-            <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex items-center gap-4">
-                <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl">
-                  <Receipt className="w-5 h-5 text-indigo-600" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Active Invoices</h3>
-                  <p className="text-[10px] font-bold text-slate-500 mt-0.5 uppercase tracking-widest">Process tenant settlements</p>
-                </div>
-              </div>
-              <div className="relative w-full md:w-72">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input 
-                  placeholder="Search tenant..." 
-                  className="w-full pl-10 pr-4 bg-slate-50 border border-slate-200 h-10 rounded-lg font-bold text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            </div>
+          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0 justify-end">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status:</span>
+            <Select value={statusFilter} onValueChange={(val: any) => setStatusFilter(val)}>
+              <SelectTrigger className="h-10 w-36 rounded-lg text-xs font-semibold bg-white border-border">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent className="rounded-lg border-border">
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50/50">
-                    <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Tenant</th>
-                    <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Amount</th>
-                    <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Maturity</th>
-                    <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">Status</th>
-                    <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredPayments?.map((payment) => {
-                    const overdue = payment.status === "pending" && isOverdue(payment.due_date);
-                    return (
-                      <tr key={payment.id} className="group hover:bg-slate-50/30 transition-colors">
-                        <td className="px-6 py-4">
-                           <span className="font-bold text-slate-900 text-xs">{payment.tenants?.name}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                           <div className="font-black text-slate-900 text-xs">ETB {(payment.amount * (overdue ? getPenaltyMultiplier(payment.due_date) : 1)).toLocaleString()}</div>
-                           {overdue && getPenaltyMultiplier(payment.due_date) > 1 && (
-                             <span className="text-[9px] font-bold text-rose-500 uppercase tracking-widest bg-rose-50 px-1 inline-block rounded">{getPenaltyLabel(payment.due_date)}</span>
-                           )}
-                        </td>
-                        <td className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                          {format(new Date(payment.due_date), "MMM dd, yyyy")}
-                        </td>
-                        <td className="px-6 py-4">
-                          {payment.status === "paid" ? (
-                            <div className="flex flex-col gap-1">
-                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-[9px] font-black uppercase tracking-tight w-fit">
-                                <CheckCircle2 className="w-3 h-3" /> Settled
-                              </div>
-                              <button 
-                                onClick={() => setSelectedReceipt(payment)}
-                                className="text-[8px] font-bold text-indigo-500 hover:text-indigo-700 uppercase tracking-widest text-left ml-1 flex items-center gap-1"
-                              >
-                                <Printer className="w-2.5 h-2.5" /> View Receipt
-                              </button>
-                            </div>
-                          ) : overdue ? (
-                            <div className="flex flex-col gap-1">
-                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-[9px] font-black uppercase tracking-tight w-fit">
-                                <AlertTriangle className="w-3 h-3" /> Overdue
-                              </div>
-                              {format(new Date(payment.due_date), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') && (
-                                <span className="text-[8px] font-black text-amber-600 uppercase tracking-widest ml-1">Due Today</span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[9px] font-black uppercase tracking-tight">
-                              <Clock className="w-3 h-3" /> Pending
-                            </div>
+        {/* Ledger Table */}
+        <div className="mt-6 border border-border rounded-lg overflow-hidden bg-white">
+          <Table>
+            <TableHeader className="bg-slate-50">
+              <TableRow className="border-b border-border">
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4 pl-6">Tenant</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4">Unit</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4">Due Date</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4">Amount</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4">Status</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4">Settlement Details</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider py-4 text-right pr-6">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredPayments.map((payment) => {
+                const tenantInfo = getTenantRoomInfo(payment.tenant_id);
+                return (
+                  <TableRow key={payment.id} className="border-b border-border hover:bg-slate-50/50 transition-colors">
+                    <TableCell className="font-bold text-slate-900 py-4 pl-6 text-sm">
+                      {tenantInfo.name}
+                    </TableCell>
+                    <TableCell className="text-slate-600 font-semibold text-xs py-4">
+                      Unit {tenantInfo.roomNumber}
+                    </TableCell>
+                    <TableCell className="text-slate-500 text-xs py-4">
+                      {payment.due_date ? format(new Date(payment.due_date), "MMM dd, yyyy") : "N/A"}
+                    </TableCell>
+                    <TableCell className="font-bold text-slate-900 py-4 text-sm">
+                      ${Number(payment.amount).toFixed(2)}
+                    </TableCell>
+                    <TableCell className="py-4">
+                      {payment.status === "paid" ? (
+                        <Badge className="bg-emerald-50 text-emerald-700 border-none font-bold text-[9px] uppercase px-2 py-0.5 rounded-full flex items-center gap-1 w-fit">
+                          <CheckCircle2 className="w-3 h-3" /> Paid
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-50 text-amber-700 border-none font-bold text-[9px] uppercase px-2 py-0.5 rounded-full flex items-center gap-1 w-fit">
+                          <Clock className="w-3 h-3" /> Pending
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-slate-500 text-xs py-4">
+                      {payment.status === "paid" ? (
+                        <div className="space-y-0.5">
+                          <p className="font-semibold text-slate-800 text-[11px]">
+                            {payment.payment_method || "Bank Transfer"}
+                          </p>
+                          {payment.paid_at && (
+                            <p className="text-[10px] text-slate-400">
+                              Received {format(new Date(payment.paid_at), "MMM dd, yyyy")}
+                            </p>
                           )}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex flex-col items-end gap-2">
-                            {recentlyAuthorized === payment.id ? (
-                              <div className="flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
-                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mr-2 flex items-center gap-1">
-                                  <RefreshCw className="w-2.5 h-2.5 animate-spin-slow" /> Quick Renew:
-                                </span>
-                                <Button 
-                                  size="sm" 
-                                  className="h-7 text-[8px] font-black uppercase bg-emerald-500 hover:bg-emerald-600 text-white px-2 rounded-md"
-                                  onClick={() => handleQuickRenew(payment.tenant_id, 'days', 1)}
-                                >+1D</Button>
-                                <Button 
-                                  size="sm" 
-                                  className="h-7 text-[8px] font-black uppercase bg-indigo-500 hover:bg-indigo-600 text-white px-2 rounded-md"
-                                  onClick={() => handleQuickRenew(payment.tenant_id, 'weeks', 1)}
-                                >+1W</Button>
-                                <Button 
-                                  size="sm" 
-                                  className="h-7 text-[8px] font-black uppercase bg-slate-900 hover:bg-slate-800 text-white px-2 rounded-md"
-                                  onClick={() => handleQuickRenew(payment.tenant_id, 'months', 1)}
-                                >+1M</Button>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  className="h-7 w-7 p-0 text-slate-400"
-                                  onClick={() => setRecentlyAuthorized(null)}
-                                >×</Button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-end gap-2">
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className={`font-black uppercase text-[9px] tracking-widest px-4 h-8 rounded-lg border transition-all ${
-                                    payment.status === "paid" 
-                                      ? "text-slate-400 hover:text-slate-600 border-border bg-slate-50" 
-                                      : "text-emerald-700 hover:bg-emerald-50 border-emerald-200 bg-white shadow-sm"
-                                  }`}
-                                  onClick={() => handleStatusToggle(payment, payment.status === "paid" ? "pending" : "paid")}
-                                >
-                                  {payment.status === "paid" ? "Audit Revert" : "Authorize"}
-                                </Button>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-8 w-8 text-slate-300 hover:text-rose-600 transition-all rounded-lg"
-                                  title="Nuclear Option: Delete Invoice"
-                                  onClick={async () => {
-                                     if (confirm(`Are you sure you want to permanently destroy this invoice for ${payment.tenants?.name}?`)) {
-                                        try {
-                                          await deletePayment.mutateAsync(payment.id);
-                                          toast.success("Invoice destroyed.");
-                                        } catch (e) {
-                                          toast.error("Deletion failed.");
-                                        }
-                                     }
-                                  }}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {filteredPayments?.length === 0 && (
-                <div className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-[10px]">No invoices found</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ALERTS TAB */}
-        {activeTab === "alerts" && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
-             <div className="card-professional bg-white overflow-hidden border-rose-100 shadow-xl shadow-rose-500/5">
-               <div className="p-6 bg-rose-50/50 border-b border-rose-100 flex items-center gap-4">
-                 <div className="p-2 bg-rose-600 rounded-lg text-white">
-                    <AlertTriangle className="w-5 h-5" />
-                 </div>
-                 <div>
-                   <h3 className="text-sm font-black text-rose-900 uppercase tracking-tight">Overdue Escalations</h3>
-                   <p className="text-[10px] font-bold text-rose-600/70 mt-0.5 uppercase tracking-widest">Requires immediate contact</p>
-                 </div>
-               </div>
-               <div className="divide-y divide-rose-50">
-                 {overdueList.length > 0 ? overdueList.map(alert => (
-                   <div key={alert.id} className="p-6 flex items-center justify-between hover:bg-rose-50/30 transition-colors">
-                     <div className="flex items-center gap-4">
-                       <div className="w-10 h-10 rounded-xl bg-white border border-rose-100 shadow-sm flex items-center justify-center">
-                          {alert.type === 'payment' ? <Wallet className="w-4 h-4 text-rose-500" /> : <Building className="w-4 h-4 text-rose-500" />}
-                       </div>
-                       <div>
-                         <div className="flex items-center gap-2">
-                           <p className="text-sm font-bold text-slate-900">{alert.name}</p>
-                           <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${alert.type === 'payment' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-rose-50 text-rose-700 border-rose-100'} uppercase tracking-widest`}>
-                              {alert.type === 'payment' ? 'Rent Overdue' : 'Lease Expired'}
-                           </span>
-                         </div>
-                         <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider mt-1 flex items-center gap-1.5">
-                            <Clock className="w-3 h-3"/> 
-                            {alert.type === 'payment' ? 'Due' : 'Expiry'}: {format(new Date(alert.date), 'MMM dd, yyyy')}
-                            {format(new Date(alert.date), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') && (
-                              <span className="ml-1 px-1.5 bg-amber-100 text-amber-700 rounded-sm font-black animate-pulse">! Today</span>
-                            )}
-                         </p>
-                       </div>
-                     </div>
-                     <div className="text-right flex items-center gap-2">
-                       {alert.type === 'payment' ? (
-                         <>
-                           <div className="text-right">
-                             <p className="text-lg font-black text-rose-700">ETB {(alert.amount * getPenaltyMultiplier(alert.date)).toLocaleString()}</p>
-                             <span className="text-[9px] inline-block mt-1 font-bold text-rose-500 uppercase tracking-widest bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded shadow-sm">
-                               {getPenaltyLabel(alert.date) || "Approaching Penalty"}
-                             </span>
-                           </div>
-                         </>
-                       ) : (
-                         <Button 
-                           variant="outline" 
-                           size="sm" 
-                           onClick={() => navigate("/tenants")}
-                           className="h-8 text-[9px] font-black uppercase tracking-widest border-rose-100 text-rose-600 hover:bg-rose-50"
-                         >Review Profile</Button>
-                       )}
-                       <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-slate-300 hover:text-rose-600 transition-all rounded-lg mt-1"
-                          title="Destroy Record"
-                          onClick={async () => {
-                             if (confirm(`Nuclear Option: Permanently destroy this alert/invoice record?`)) {
-                                try {
-                                  if (alert.type === 'payment') {
-                                    await deletePayment.mutateAsync(alert.original.id);
-                                    toast.success("Alert destroyed.");
-                                  } else {
-                                    toast.error("Lease expirations cannot be deleted here, only settled via profile.");
-                                  }
-                                } catch (e) {
-                                  toast.error("Action failed.");
-                                }
-                             }
-                          }}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                     </div>
-                   </div>
-                 )) : (
-                   <div className="p-12 text-center text-emerald-500 font-bold text-xs uppercase tracking-widest">No overdue items</div>
-                 )}
-               </div>
-             </div>
-
-             <div className="card-professional bg-white overflow-hidden border-amber-100 shadow-xl shadow-amber-500/5">
-               <div className="p-6 bg-amber-50/50 border-b border-amber-100 flex items-center gap-4">
-                 <div className="p-2 bg-amber-600 rounded-lg text-white">
-                    <Clock className="w-5 h-5 transition-transform group-hover:scale-110" />
-                 </div>
-                 <div>
-                   <h3 className="text-sm font-black text-amber-900 uppercase tracking-tight">Upcoming Maturities</h3>
-                   <p className="text-[10px] font-bold text-amber-700/70 mt-0.5 uppercase tracking-widest">Due within 7 days</p>
-                 </div>
-               </div>
-               <div className="divide-y divide-amber-50">
-                 {upcomingList.length > 0 ? upcomingList.map(alert => (
-                   <div key={alert.id} className="p-6 flex items-center justify-between hover:bg-amber-50/20 transition-colors">
-                     <div className="flex items-center gap-4">
-                       <div className="w-10 h-10 rounded-xl bg-white border border-amber-100 shadow-sm flex items-center justify-center">
-                          {alert.type === 'payment' ? <Wallet className="w-4 h-4 text-amber-600" /> : <Building className="w-4 h-4 text-amber-600" />}
-                       </div>
-                       <div>
-                         <div className="flex items-center gap-2">
-                           <p className="text-sm font-bold text-slate-900">{alert.name}</p>
-                           <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${alert.type === 'payment' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-rose-50 text-rose-700 border-rose-100'} uppercase tracking-widest`}>
-                              {alert.type === 'payment' ? 'Payment Due' : 'Contract Ending'}
-                           </span>
-                         </div>
-                         <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-1">Deadline: {format(new Date(alert.date), 'MMM dd, yyyy')}</p>
-                       </div>
-                     </div>
-                     <div className="text-right">
-                        {alert.type === 'payment' ? (
-                          <p className="text-sm font-black text-slate-900">ETB {alert.amount.toLocaleString()}</p>
-                        ) : (
-                          <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded">Action Required</span>
+                          {payment.staff_responsible && (
+                            <p className="text-[9px] uppercase tracking-wider text-slate-400">
+                              By: {payment.staff_responsible}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="italic text-slate-400 text-[11px]">Unsettled Ledger</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right py-4 pr-6">
+                      <div className="flex items-center justify-end gap-2">
+                        {payment.status === "pending" && (
+                          <Button
+                            size="sm"
+                            className="bg-primary text-white font-bold text-xs h-8 px-3 rounded-lg hover:bg-primary/95 transition-all"
+                            onClick={() => {
+                              setSelectedPayment(payment);
+                              setIsReconcileOpen(true);
+                            }}
+                          >
+                            Reconcile
+                          </Button>
                         )}
-                     </div>
-                   </div>
-                 )) : (
-                   <div className="p-12 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No upcoming deadlines</div>
-                 )}
-               </div>
-             </div>
-          </div>
-        )}
-
-        {/* REGISTRY / HISTORY TAB */}
-        {activeTab === "registry" && (
-          <div className="card-professional bg-white animate-in fade-in slide-in-from-bottom-2">
-            <div className="p-6 border-b border-border flex items-center gap-4">
-              <div className="p-2.5 bg-slate-100 border border-slate-200 rounded-xl">
-                <FileText className="w-5 h-5 text-slate-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Comprehensive History</h3>
-                <p className="text-[10px] font-bold text-slate-500 mt-0.5 uppercase tracking-widest">Full audit trail of all transactions</p>
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-               {payments.data?.map(payment => (
-                 <div key={payment.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-100 bg-slate-50 gap-4 group">
-                   <div className="flex items-center gap-4">
-                     <div className={`w-2 h-10 rounded-full ${payment.status === 'paid' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                     <div>
-                       <div className="flex items-center gap-2">
-                         <p className="text-sm font-bold text-slate-900">{payment.tenants?.name}</p>
-                         {payment.status === 'paid' && (
-                           <button 
-                             onClick={() => setSelectedReceipt(payment)}
-                             className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-indigo-600 transition-colors"
-                           >
-                             <Printer className="w-3.5 h-3.5" />
-                           </button>
-                         )}
-                       </div>
-                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-0.5">{format(new Date(payment.due_date), "MMM yyyy")} Billing Cycle</p>
-                     </div>
-                   </div>
-                   <div className="flex items-center gap-8 sm:text-right">
-                     <div>
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Audit Info</p>
-                       <p className="text-xs font-bold text-slate-800 mt-0.5">{payment.payment_method || 'System Transfer'}</p>
-                     </div>
-                     <div className="w-24">
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Amount</p>
-                       <p className="text-xs font-black text-slate-900 mt-0.5 bg-white border px-2 py-1 rounded inline-block shadow-sm">ETB {payment.amount.toLocaleString()}</p>
-                     </div>
-                   </div>
-                 </div>
-               ))}
-            </div>
-          </div>
-        )}
-
-        {/* Receipt Modal Overlay */}
-        {selectedReceipt && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedReceipt(null)} />
-            <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
-               {/* Digital Header */}
-               <div className="p-8 bg-slate-900 text-white text-center space-y-2">
-                  <div className="w-12 h-12 bg-white/10 rounded-2xl mx-auto flex items-center justify-center border border-white/10 mb-4">
-                     <Check className="w-6 h-6 text-emerald-400" />
-                  </div>
-                  <h3 className="text-lg font-black uppercase tracking-widest">Official Receipt</h3>
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">Fana Plaza Executive Suite</p>
-               </div>
-
-               {/* Receipt Body */}
-               <div className="p-8 space-y-6">
-                 <div className="space-y-4">
-                    <div className="flex justify-between border-b border-dashed border-slate-200 pb-3">
-                       <span className="text-[10px] font-black text-slate-400 uppercase">Tenant</span>
-                       <span className="text-xs font-bold text-slate-900">{selectedReceipt.tenants?.name}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-dashed border-slate-200 pb-3">
-                       <span className="text-[10px] font-black text-slate-400 uppercase">Billing Period</span>
-                       <span className="text-xs font-bold text-slate-900">{format(new Date(selectedReceipt.due_date), "MMMM yyyy")}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-dashed border-slate-200 pb-3">
-                       <span className="text-[10px] font-black text-slate-400 uppercase">Settlement Date</span>
-                       <span className="text-xs font-bold text-slate-900">{selectedReceipt.paid_at ? format(new Date(selectedReceipt.paid_at), "MMM dd, yyyy") : 'Authorized'}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-dashed border-slate-200 pb-3">
-                       <span className="text-[10px] font-black text-slate-400 uppercase">Payment Method</span>
-                       <span className="text-xs font-bold text-slate-900">{selectedReceipt.payment_method || 'Authorized Transfer'}</span>
-                    </div>
-                 </div>
-
-                 <div className="bg-slate-50 rounded-2xl p-6 text-center border-2 border-dashed border-slate-200">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Amount Settled</p>
-                    <h2 className="text-3xl font-black text-slate-900 tracking-tighter">ETB {selectedReceipt.amount.toLocaleString()}</h2>
-                 </div>
-
-                 {/* Actions */}
-                 <div className="grid grid-cols-2 gap-3 no-print">
-                    <Button 
-                      className="rounded-xl h-12 bg-slate-900 text-white font-bold text-[10px] uppercase tracking-widest"
-                      onClick={() => window.print()}
-                    >
-                       <Printer className="w-3.5 h-3.5 mr-2" /> Print
-                    </Button>
-                    <Button 
-                      variant="outline"
-                      className="rounded-xl h-12 border-slate-200 font-bold text-[10px] uppercase tracking-widest"
-                      onClick={() => setSelectedReceipt(null)}
-                    >
-                       Close
-                    </Button>
-                 </div>
-
-                 <p className="text-center text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em] pt-4">
-                    Thank you for your timely settlement.
-                 </p>
-               </div>
-
-               {/* Print Only Styles */}
-               <style dangerouslySetInnerHTML={{ __html: `
-                 @media print {
-                   body * { visibility: hidden; }
-                   .no-print { display: none !important; }
-                   .fixed.inset-0 { position: absolute; top: 0; left: 0; visibility: visible; }
-                   .fixed.inset-0 * { visibility: visible; }
-                   .absolute.inset-0 { display: none; }
-                 }
-               `}} />
-            </div>
-          </div>
-        )}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          onClick={() => handleDelete(payment.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {filteredPayments.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-12 text-slate-400 font-medium italic text-xs">
+                    No payment records found matching criteria
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
+
+      {/* Reconcile Modal */}
+      <Dialog open={isReconcileOpen} onOpenChange={setIsReconcileOpen}>
+        <DialogContent className="rounded-xl border-border bg-white sm:max-w-md p-6 shadow-2xl">
+          <DialogHeader className="mb-4">
+            <DialogTitle className="text-lg font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-primary" /> Reconcile Receipt
+            </DialogTitle>
+            <DialogDescription className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Mark invoice for {selectedPayment && getTenantRoomInfo(selectedPayment.tenant_id).name} as Paid
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg border border-border flex justify-between items-center text-xs">
+              <span className="font-semibold text-slate-500">Invoice Amount</span>
+              <span className="font-bold text-slate-900 text-sm">
+                ${selectedPayment && Number(selectedPayment.amount).toFixed(2)}
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Payment Method</Label>
+              <Select
+                value={reconcileData.method}
+                onValueChange={(val) => setReconcileData({ ...reconcileData, method: val })}
+              >
+                <SelectTrigger className="h-10 rounded-lg text-xs font-semibold bg-white border-border">
+                  <SelectValue placeholder="Select Method" />
+                </SelectTrigger>
+                <SelectContent className="rounded-lg border-border">
+                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="Cash">Cash</SelectItem>
+                  <SelectItem value="Mobile Money">Mobile Money</SelectItem>
+                  <SelectItem value="Cheque">Cheque</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Staff Responsible</Label>
+              <Input
+                placeholder="Receiver name or initials..."
+                value={reconcileData.staff}
+                onChange={(e) => setReconcileData({ ...reconcileData, staff: e.target.value })}
+                className="h-10 rounded-lg text-sm bg-white border-border"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-6 flex gap-2">
+            <Button
+              variant="outline"
+              className="h-10 text-xs font-bold border-border rounded-lg"
+              onClick={() => {
+                setIsReconcileOpen(false);
+                setSelectedPayment(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="h-10 text-xs font-bold bg-primary text-white rounded-lg hover:bg-primary/95"
+              onClick={handleReconcileSubmit}
+            >
+              Confirm Reconciliation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

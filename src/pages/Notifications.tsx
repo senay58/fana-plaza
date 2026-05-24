@@ -83,21 +83,7 @@ export default function Notifications() {
                       Acknowledge
                     </button>
                   )}
-                  {notification.title.includes("Lease Expiration") && (() => {
-                     const tenantName = notification.title.split(": ")[1];
-                     const tenant = tenants.data?.find(t => t.name === tenantName);
-                     if (tenant?.contact_number) {
-                       return (
-                         <button 
-                           onClick={() => window.location.href = `sms:${tenant.contact_number}?body=Hello ${encodeURIComponent(tenant.name)}, your lease is scheduled to expire in the coming days. Please visit the management office to complete renewal protocol.`}
-                           className="text-[10px] font-black text-indigo-400 hover:text-indigo-900 uppercase tracking-widest flex items-center gap-2 bg-indigo-500/10 hover:bg-indigo-100 px-4 py-2 rounded-xl transition-all border border-transparent hover:border-indigo-500/20"
-                         >
-                           Execute SMS
-                         </button>
-                       );
-                     }
-                     return null;
-                  })()}
+
                   <button 
                     onClick={() => handleDelete(notification.id)}
                     className="text-[10px] font-black text-slate-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-2 hover:bg-rose-500/10 px-4 py-2 rounded-xl transition-all border border-transparent hover:border-rose-500/20"

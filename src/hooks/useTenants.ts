@@ -14,6 +14,8 @@ export type Tenant = {
   lease_end?: string;
   notes?: string;
   source?: 'direct' | 'airbnb';
+  status?: 'active' | 'archived' | 'evicted';
+  move_out_date?: string;
 };
 
 export type Document = {
@@ -130,6 +132,45 @@ export function useTenants() {
     enabled: !!tenantId,
   });
 
+  const checkoutTenant = useMutation({
+    mutationFn: async ({ id, roomStatus }: { id: string; roomStatus: 'vacant' | 'maintenance' }) => {
+      // 1. Get the tenant's current room_id before we unassign
+      const { data: tenant, error: fetchError } = await supabase
+        .from("tenants")
+        .select("room_id")
+        .eq("id", id)
+        .single();
+      if (fetchError) throw fetchError;
+
+      const previousRoomId = tenant?.room_id;
+
+      // 2. Archive the tenant: unassign room, set status, record move-out date
+      const { error: updateError } = await supabase
+        .from("tenants")
+        .update({
+          room_id: null,
+          status: 'archived',
+          move_out_date: new Date().toISOString(),
+          lease_end: new Date().toISOString(),
+        })
+        .eq("id", id);
+      if (updateError) throw updateError;
+
+      // 3. Explicitly set the room status (in case the trigger doesn't cover the chosen status)
+      if (previousRoomId) {
+        const { error: roomError } = await supabase
+          .from("rooms")
+          .update({ status: roomStatus })
+          .eq("id", previousRoomId);
+        if (roomError) throw roomError;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+
   return {
     tenants,
     addTenant,
@@ -139,5 +180,6 @@ export function useTenants() {
     documents,
     renewLease,
     deleteDocument,
+    checkoutTenant,
   };
 }

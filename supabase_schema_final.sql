@@ -18,6 +18,25 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='lease_expiry_days') THEN
         ALTER TABLE public.system_settings ADD COLUMN lease_expiry_days INTEGER DEFAULT 7;
     END IF;
+    -- SMS feature columns
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_provider_number') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_provider_number TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_provider_url') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_provider_url TEXT; -- e.g. https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages.json
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_provider_key') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_provider_key TEXT; -- e.g. base64 encoded SID:TOKEN
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_template_5_days') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_template_5_days TEXT DEFAULT 'Dear {name}, you have 5 days to make your payment. Please ensure timely settlement.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_template_3_days') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_template_3_days TEXT DEFAULT 'Dear {name}, you have 3 days to make your payment. Please secure your unit.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='system_settings' AND column_name='sms_template_deadline') THEN
+        ALTER TABLE public.system_settings ADD COLUMN sms_template_deadline TEXT DEFAULT 'Dear {name}, today is the deadline for your payment. Please make payment by today.';
+    END IF;
 END $$;
 
 -- 2. TENANTS TABLE (Detailed Identity Plate)

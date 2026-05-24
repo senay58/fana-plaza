@@ -9,6 +9,12 @@ export type SystemSettings = {
   grace_period: number;
   lease_expiry_days: number;
   updated_at: string;
+  sms_provider_number?: string;
+  sms_provider_url?: string;
+  sms_provider_key?: string;
+  sms_template_5_days?: string;
+  sms_template_3_days?: string;
+  sms_template_deadline?: string;
 };
 
 export function useSettings() {

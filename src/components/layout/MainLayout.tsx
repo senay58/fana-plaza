@@ -1,11 +1,13 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { UserNav } from "./UserNav";
-import { Bell, Menu, X, Search, LayoutGrid } from "lucide-react";
+import { Bell, Menu, Search, LayoutGrid } from "lucide-react";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
+import { useAutoNotifications } from "@/hooks/useAutoNotifications";
 
 export function MainLayout() {
+  useAutoNotifications(); // 🔔 Auto-generates lease expiration warning notifications
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
 
@@ -14,8 +16,8 @@ export function MainLayout() {
       case "/": return "Executive Dashboard";
       case "/units": return "Property Registry";
       case "/tenants": return "Tenant Management";
+      case "/payments": return "Payments Ledger";
       case "/maintenance": return "Maintenance Ledger";
-      case "/payments": return "Financial Management";
       case "/settings": return "Console Control";
       case "/notifications": return "System Notifications";
       default: return "Fana Plaza Manager";
