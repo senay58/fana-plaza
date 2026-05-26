@@ -317,4 +317,37 @@ export const offlineDb = {
   
   getSettings: () => getItem<SystemSettings>("settings", initialSettings),
   saveSettings: (settings: SystemSettings) => setItem("settings", settings),
+
+  // Reset Methods
+  resetProperties: () => {
+    setItem("floors", initialFloors);
+    setItem("rooms", initialRooms.map(r => ({ ...r, status: "vacant" as const })));
+  },
+  resetTenants: () => {
+    setItem("tenants", initialTenants);
+    const rooms = getItem<Room[]>("rooms", initialRooms);
+    const updated = rooms.map(r => {
+      const occupied = initialTenants.find(t => t.room_id === r.id && t.status === "active");
+      return { ...r, status: occupied ? "occupied" as const : "vacant" as const };
+    });
+    setItem("rooms", updated);
+  },
+  resetPayments: () => {
+    setItem("payments", initialPayments);
+  },
+  resetMaintenance: () => {
+    setItem("maintenance", initialMaintenance);
+  },
+  resetAll: () => {
+    setItem("floors", initialFloors);
+    const updatedRooms = initialRooms.map(r => {
+      const occupied = initialTenants.find(t => t.room_id === r.id && t.status === "active");
+      return { ...r, status: occupied ? "occupied" as const : "vacant" as const };
+    });
+    setItem("rooms", updatedRooms);
+    setItem("tenants", initialTenants);
+    setItem("payments", initialPayments);
+    setItem("maintenance", initialMaintenance);
+    setItem("notifications", initialNotifications);
+  }
 };

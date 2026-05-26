@@ -1,13 +1,25 @@
 import { Button } from "@/components/ui/button";
-import { Shield, Lock, UserCircle, Gauge, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Shield, Lock, UserCircle, Gauge, Eye, EyeOff, KeyRound, RefreshCw, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useSettings } from "@/hooks/useSettings";
 import { useTenants } from "@/hooks/useTenants";
+import { useReset } from "@/hooks/useReset";
 import { useState, useEffect } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from "@/components/ui/dialog";
 
 export default function Settings() {
   const { settings, updateSettings } = useSettings();
+  const { resetAll } = useReset();
   const [formData, setFormData] = useState({
     username: "",
     passcode: "",
@@ -29,6 +41,11 @@ export default function Settings() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Reset states
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetPasscode, setResetPasscode] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (settings.data) {
@@ -104,6 +121,19 @@ export default function Settings() {
       toast.success("Policy settings synchronized.");
     } catch (e) {
       toast.error("Policy update failed.");
+    }
+  };
+
+  const handleResetAll = async () => {
+    setIsResetting(true);
+    try {
+      await resetAll.mutateAsync({ passcode: resetPasscode });
+      setIsResetDialogOpen(false);
+      setResetPasscode("");
+    } catch (e) {
+      // Errors handled by hook
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -289,6 +319,59 @@ export default function Settings() {
               Update Password
             </Button>
           </div>
+        </div>
+      </div>
+
+      {/* Danger Zone: Factory Reset */}
+      <div className="card-professional bg-white border border-rose-200">
+        <div className="p-8 border-b border-rose-100 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-md">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-rose-600 uppercase tracking-tight">Danger Zone: Master Reset</h3>
+              <p className="text-[10px] font-bold text-slate-500 mt-0.5 uppercase tracking-widest">Wipe all data and restore factory defaults</p>
+            </div>
+          </div>
+          
+          <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-10 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold uppercase tracking-widest text-[10px] px-6 rounded-lg shadow-sm">
+                <RefreshCw className="w-3.5 h-3.5 mr-2" /> Master Reset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-xl bg-white border-border sm:max-w-md p-6">
+               <DialogHeader>
+                  <DialogTitle className="text-lg font-bold text-slate-900 text-rose-600">Master Factory Reset</DialogTitle>
+                  <DialogDescription className="text-xs font-semibold text-slate-500">
+                    Are you absolutely sure you want to completely wipe all registry data? This includes all tenants, rooms, payments, maintenance logs, and notifications. This action requires authorization.
+                  </DialogDescription>
+               </DialogHeader>
+               <div className="space-y-4 py-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Enter Passcode to Confirm</label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter passcode"
+                      value={resetPasscode} 
+                      onChange={e => setResetPasscode(e.target.value)} 
+                      className="h-10 rounded-lg text-sm bg-slate-50 border-border" 
+                    />
+                 </div>
+               </div>
+               <DialogFooter className="flex gap-2">
+                 <Button onClick={() => setIsResetDialogOpen(false)} variant="ghost" className="flex-1 rounded-lg">Cancel</Button>
+                 <Button 
+                   onClick={handleResetAll} 
+                   disabled={isResetting || !resetPasscode}
+                   className="flex-1 h-11 bg-rose-600 hover:bg-rose-700 text-white font-bold tracking-widest rounded-lg shadow-lg shadow-rose-600/20"
+                 >
+                   {isResetting ? "RESETTING..." : "CONFIRM MASTER RESET"}
+                 </Button>
+               </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </div>

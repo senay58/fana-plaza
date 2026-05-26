@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useTenants, Tenant } from "@/hooks/useTenants";
 import { useBuilding } from "@/hooks/useBuilding";
 import { usePayments, Payment } from "@/hooks/usePayments";
+import { useReset } from "@/hooks/useReset";
 import { 
   Search, 
   Trash2, 
@@ -22,7 +23,8 @@ import {
   AlertCircle,
   TrendingUp,
   User,
-  ArrowUpRight
+  ArrowUpRight,
+  RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +45,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { format } from "date-fns";
 
@@ -60,6 +63,7 @@ export default function Tenants() {
   
   const { floors, rooms, vacantRooms, updateRoom } = useBuilding();
   const { payments, updatePaymentStatus, deletePayment } = usePayments();
+  const { resetTenants } = useReset();
   
   const [searchTerm, setSearchTerm] = useState("");
   const [listTab, setListTab] = useState<"active" | "archived">("active");
@@ -73,6 +77,11 @@ export default function Tenants() {
   // Checkout states
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutRoomStatus, setCheckoutRoomStatus] = useState<'vacant' | 'maintenance'>('vacant');
+
+  // Reset states
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetPasscode, setResetPasscode] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
   // Tenant-specific payment reconciliation
   const [isReconcileOpen, setIsReconcileOpen] = useState(false);
@@ -118,6 +127,19 @@ export default function Tenants() {
       toast.success("Notes synchronized.");
     } catch (e) {
       toast.error("Failed to sync notes.");
+    }
+  };
+
+  const handleResetTenants = async () => {
+    setIsResetting(true);
+    try {
+      await resetTenants.mutateAsync({ passcode: resetPasscode });
+      setIsResetDialogOpen(false);
+      setResetPasscode("");
+    } catch (e) {
+      // Errors handled by hook
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -228,6 +250,45 @@ export default function Tenants() {
         </div>
         
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+          {/* RESET TENANTS BUTTON & DIALOG */}
+          <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-10 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold uppercase tracking-widest text-[10px] px-4 shrink-0 rounded-lg shadow-sm">
+                <RefreshCw className="w-3.5 h-3.5 mr-2" /> Reset Tenants
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-xl bg-white border-border sm:max-w-md p-6">
+               <DialogHeader>
+                  <DialogTitle className="text-lg font-bold text-slate-900 text-rose-600">Reset Tenants</DialogTitle>
+                  <DialogDescription className="text-xs font-semibold text-slate-500">
+                    Are you sure you want to reset all tenant profiles to the initial default state? This action requires authorization.
+                  </DialogDescription>
+               </DialogHeader>
+               <div className="space-y-4 py-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Enter Passcode to Confirm</label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter passcode"
+                      value={resetPasscode} 
+                      onChange={e => setResetPasscode(e.target.value)} 
+                      className="h-10 rounded-lg text-sm bg-slate-50 border-border" 
+                    />
+                 </div>
+               </div>
+               <DialogFooter className="flex gap-2">
+                 <Button onClick={() => setIsResetDialogOpen(false)} variant="ghost" className="flex-1 rounded-lg">Cancel</Button>
+                 <Button 
+                   onClick={handleResetTenants} 
+                   disabled={isResetting || !resetPasscode}
+                   className="flex-1 h-11 bg-rose-600 hover:bg-rose-700 text-white font-bold tracking-widest rounded-lg shadow-lg shadow-rose-600/20"
+                 >
+                   {isResetting ? "RESETTING..." : "CONFIRM RESET"}
+                 </Button>
+               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           {/* Active / Archive Toggle */}
           <div className="flex border border-border bg-white rounded-lg p-0.5 w-full sm:w-auto self-stretch">
             <button

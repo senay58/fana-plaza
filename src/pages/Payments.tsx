@@ -2,6 +2,7 @@ import { useState } from "react";
 import { usePayments, Payment } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
 import { useBuilding } from "@/hooks/useBuilding";
+import { useReset } from "@/hooks/useReset";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
@@ -34,7 +36,8 @@ import {
   DollarSign,
   Calendar,
   User,
-  CreditCard
+  CreditCard,
+  RefreshCw
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -43,6 +46,7 @@ export default function Payments() {
   const { payments, updatePaymentStatus, generateMonthlyPayments, deletePayment } = usePayments();
   const { tenants } = useTenants();
   const { rooms } = useBuilding();
+  const { resetPayments } = useReset();
 
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "paid" | "pending">("all");
@@ -54,6 +58,11 @@ export default function Payments() {
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Reset states
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetPasscode, setResetPasscode] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
   // Sync / Auto-generate monthly payments
   const handleGeneratePayments = async () => {
@@ -65,6 +74,19 @@ export default function Payments() {
       toast.error(error.message || "Failed to generate invoices.");
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleResetPayments = async () => {
+    setIsResetting(true);
+    try {
+      await resetPayments.mutateAsync({ passcode: resetPasscode });
+      setIsResetDialogOpen(false);
+      setResetPasscode("");
+    } catch (e) {
+      // Errors handled by hook
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -151,14 +173,54 @@ export default function Payments() {
           </p>
         </div>
 
-        <Button
-          onClick={handleGeneratePayments}
-          disabled={isGenerating}
-          className="h-10 px-4 bg-black text-white hover:bg-slate-800 rounded-lg font-bold text-xs flex gap-2 shadow-lg transition-all"
-        >
-          <Sparkles className="w-4 h-4" />
-          {isGenerating ? "Syncing Registry..." : "Generate Monthly Invoices"}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-10 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold uppercase tracking-widest text-[10px] px-4 shrink-0 rounded-lg shadow-sm">
+                <RefreshCw className="w-3.5 h-3.5 mr-2" /> Reset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-xl bg-white border-border sm:max-w-md p-6">
+               <DialogHeader>
+                  <DialogTitle className="text-lg font-bold text-slate-900 text-rose-600">Reset Payments</DialogTitle>
+                  <DialogDescription className="text-xs font-semibold text-slate-500">
+                    Are you sure you want to delete all payment records and reset the ledger? This action requires authorization.
+                  </DialogDescription>
+               </DialogHeader>
+               <div className="space-y-4 py-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Enter Passcode to Confirm</label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter passcode"
+                      value={resetPasscode} 
+                      onChange={e => setResetPasscode(e.target.value)} 
+                      className="h-10 rounded-lg text-sm bg-slate-50 border-border" 
+                    />
+                 </div>
+               </div>
+               <DialogFooter className="flex gap-2">
+                 <Button onClick={() => setIsResetDialogOpen(false)} variant="ghost" className="flex-1 rounded-lg">Cancel</Button>
+                 <Button 
+                   onClick={handleResetPayments} 
+                   disabled={isResetting || !resetPasscode}
+                   className="flex-1 h-11 bg-rose-600 hover:bg-rose-700 text-white font-bold tracking-widest rounded-lg shadow-lg shadow-rose-600/20"
+                 >
+                   {isResetting ? "RESETTING..." : "CONFIRM RESET"}
+                 </Button>
+               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Button
+            onClick={handleGeneratePayments}
+            disabled={isGenerating}
+            className="h-10 px-4 bg-black text-white hover:bg-slate-800 rounded-lg font-bold text-xs flex gap-2 shadow-lg transition-all"
+          >
+            <Sparkles className="w-4 h-4" />
+            {isGenerating ? "Syncing Registry..." : "Generate Monthly Invoices"}
+          </Button>
+        </div>
       </div>
 
       {/* Metrics Row */}

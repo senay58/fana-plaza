@@ -1,5 +1,6 @@
 import { useMaintenance, MaintenanceLog } from "@/hooks/useMaintenance";
 import { useBuilding } from "@/hooks/useBuilding";
+import { useReset } from "@/hooks/useReset";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,7 +18,8 @@ import {
   Sparkles,
   AlertCircle,
   Save,
-  User
+  User,
+  RefreshCw
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -35,10 +37,17 @@ import {
 export default function Maintenance() {
   const { maintenanceLogs, addMaintenanceLog, updateMaintenanceStatus, deleteMaintenanceLog } = useMaintenance();
   const { rooms } = useBuilding();
+  const { resetMaintenance } = useReset();
+
   const [searchTerm, setSearchTerm] = useState("");
   const [activeQueue, setActiveQueue] = useState("All Logs");
   const [isAddOpen, setIsAddOpen] = useState(false);
   
+  // Reset states
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetPasscode, setResetPasscode] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
+
   const [newLog, setNewLog] = useState({
     room_id: "",
     description: "",
@@ -121,6 +130,19 @@ export default function Maintenance() {
     }
   };
 
+  const handleResetMaintenance = async () => {
+    setIsResetting(true);
+    try {
+      await resetMaintenance.mutateAsync({ passcode: resetPasscode });
+      setIsResetDialogOpen(false);
+      setResetPasscode("");
+    } catch (e) {
+      // Errors handled by hook
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const handleAssignmentUpdate = async (id: string, staffName: string) => {
     try {
       await updateMaintenanceStatus.mutateAsync({ 
@@ -153,6 +175,44 @@ export default function Maintenance() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          
+          <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-11 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold uppercase tracking-widest text-[10px] px-4 shrink-0 rounded-lg shadow-sm">
+                <RefreshCw className="w-3.5 h-3.5 mr-2" /> Reset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-xl bg-white border-border sm:max-w-md p-6">
+               <DialogHeader>
+                  <DialogTitle className="text-lg font-bold text-slate-900 text-rose-600">Reset Maintenance Logs</DialogTitle>
+                  <DialogDescription className="text-xs font-semibold text-slate-500">
+                    Are you sure you want to delete all maintenance tickets? This action requires authorization.
+                  </DialogDescription>
+               </DialogHeader>
+               <div className="space-y-4 py-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Enter Passcode to Confirm</label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter passcode"
+                      value={resetPasscode} 
+                      onChange={e => setResetPasscode(e.target.value)} 
+                      className="h-10 rounded-lg text-sm bg-slate-50 border-border" 
+                    />
+                 </div>
+               </div>
+               <DialogFooter className="flex gap-2">
+                 <Button onClick={() => setIsResetDialogOpen(false)} variant="ghost" className="flex-1 rounded-lg">Cancel</Button>
+                 <Button 
+                   onClick={handleResetMaintenance} 
+                   disabled={isResetting || !resetPasscode}
+                   className="flex-1 h-11 bg-rose-600 hover:bg-rose-700 text-white font-bold tracking-widest rounded-lg shadow-lg shadow-rose-600/20"
+                 >
+                   {isResetting ? "RESETTING..." : "CONFIRM RESET"}
+                 </Button>
+               </DialogFooter>
+            </DialogContent>
+          </Dialog>
           
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger asChild>
