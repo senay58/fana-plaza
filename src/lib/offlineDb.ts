@@ -121,6 +121,7 @@ function setItem<T>(key: string, value: T): void {
 }
 
 // 1. Initial Seeds
+// 1. Initial Seeds
 const initialFloors: Floor[] = [
   { id: "f-0", number: 0, name: "Ground Floor", type: "commercial", created_at: new Date().toISOString() },
   { id: "f-1", number: 1, name: "1st Floor", type: "commercial", created_at: new Date().toISOString() },
@@ -128,6 +129,9 @@ const initialFloors: Floor[] = [
   { id: "f-3", number: 3, name: "3rd Floor", type: "commercial", created_at: new Date().toISOString() },
   { id: "f-4", number: 4, name: "4th Floor", type: "residential", created_at: new Date().toISOString() },
   { id: "f-5", number: 5, name: "5th Floor", type: "residential", created_at: new Date().toISOString() },
+  { id: "f-6", number: 6, name: "6th Floor", type: "residential", created_at: new Date().toISOString() },
+  { id: "f-7", number: 7, name: "7th Floor", type: "residential", created_at: new Date().toISOString() },
+  { id: "f-8", number: 8, name: "8th Floor", type: "residential", created_at: new Date().toISOString() },
 ];
 
 const initialRooms: Room[] = (() => {
@@ -150,8 +154,8 @@ const initialRooms: Room[] = (() => {
       });
     }
   }
-  // Residential floors
-  for (let f = 4; f <= 5; f++) {
+  // Residential floors (4 to 8)
+  for (let f = 4; f <= 8; f++) {
     for (let r = 1; r <= 4; r++) {
       const roomNum = `${f}${String(r).padStart(2, "0")}`;
       list.push({
@@ -324,30 +328,24 @@ export const offlineDb = {
     setItem("rooms", initialRooms.map(r => ({ ...r, status: "vacant" as const })));
   },
   resetTenants: () => {
-    setItem("tenants", initialTenants);
+    setItem("tenants", []);
     const rooms = getItem<Room[]>("rooms", initialRooms);
-    const updated = rooms.map(r => {
-      const occupied = initialTenants.find(t => t.room_id === r.id && t.status === "active");
-      return { ...r, status: occupied ? "occupied" as const : "vacant" as const };
-    });
+    const updated = rooms.map(r => ({ ...r, status: "vacant" as const }));
     setItem("rooms", updated);
   },
   resetPayments: () => {
-    setItem("payments", initialPayments);
+    setItem("payments", []);
   },
   resetMaintenance: () => {
-    setItem("maintenance", initialMaintenance);
+    setItem("maintenance", []);
   },
   resetAll: () => {
     setItem("floors", initialFloors);
-    const updatedRooms = initialRooms.map(r => {
-      const occupied = initialTenants.find(t => t.room_id === r.id && t.status === "active");
-      return { ...r, status: occupied ? "occupied" as const : "vacant" as const };
-    });
+    const updatedRooms = initialRooms.map(r => ({ ...r, status: "vacant" as const }));
     setItem("rooms", updatedRooms);
-    setItem("tenants", initialTenants);
-    setItem("payments", initialPayments);
-    setItem("maintenance", initialMaintenance);
-    setItem("notifications", initialNotifications);
+    setItem("tenants", []);
+    setItem("payments", []);
+    setItem("maintenance", []);
+    setItem("notifications", []);
   }
 };
