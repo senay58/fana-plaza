@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import { offlineDb } from "@/lib/offlineDb";
 
 const SESSION_KEY = "fana_plaza_session";
 
@@ -35,14 +36,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle();
 
       if (error) {
-        console.error("Auth registry error:", error);
-        // Fallback to 1234 on connection error
-        if (passcode === "1234") {
-          localStorage.setItem(SESSION_KEY, "authorized");
-          setIsAuthenticated(true);
-          toast.warning("Manual Override Successful. Registry is offline.");
-          return true;
-        }
         throw error;
       }
 
@@ -58,14 +51,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     } catch (e) {
-      // Final hard-fallback for 1234
-      if (passcode === "1234") {
+      console.warn("Supabase auth offline fallback:", e);
+      // Offline fallback using offlineDb passcode
+      const localPasscode = offlineDb.getSettings().passcode || "1234";
+      if (passcode === localPasscode || passcode === "1234") {
         localStorage.setItem(SESSION_KEY, "authorized");
         setIsAuthenticated(true);
-        toast.warning("Emergency Access Established. Registry check bypassed.");
+        toast.warning("Manual Override Successful. Operating in local-only mode.");
         return true;
       }
-      toast.error("Failed to verify credentials.");
+      toast.error("Access Denied. Verification mismatch.");
       return false;
     }
   };

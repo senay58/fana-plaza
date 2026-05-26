@@ -1,21 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { offlineDb, SystemSettings } from "@/lib/offlineDb";
 
-export type SystemSettings = {
-  id: string;
-  username: string;
-  passcode: string;
-  penalty_rate: number;
-  grace_period: number;
-  lease_expiry_days: number;
-  updated_at: string;
-  sms_provider_number?: string;
-  sms_provider_url?: string;
-  sms_provider_key?: string;
-  sms_template_5_days?: string;
-  sms_template_3_days?: string;
-  sms_template_deadline?: string;
-};
+export type { SystemSettings };
 
 export function useSettings() {
   const queryClient = useQueryClient();
@@ -23,36 +10,59 @@ export function useSettings() {
   const settings = useQuery({
     queryKey: ["system_settings"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("system_settings")
-        .select("*")
-        .limit(1)
-        .single();
-      
-      if (error && error.code !== "PGRST116") throw error; // PGRST116 is 'no rows'
-      return data as SystemSettings | null;
+      if (!isSupabaseConfigured) {
+        return offlineDb.getSettings();
+      }
+      try {
+        const { data, error } = await supabase
+          .from("system_settings")
+          .select("*")
+          .limit(1)
+          .single();
+        
+        if (error && error.code !== "PGRST116") throw error;
+        if (!data) return offlineDb.getSettings();
+        return data as SystemSettings;
+      } catch (err) {
+        console.warn("Supabase fetchSettings error, falling back to local registry:", err);
+        return offlineDb.getSettings();
+      }
     },
+    retry: 1, // Minimize retry delay to load instantly
   });
 
   const updateSettings = useMutation({
     mutationFn: async (newSettings: Partial<SystemSettings>) => {
-      const currentSettings = settings.data;
+      const currentSettings = settings.data || offlineDb.getSettings();
       
-      let promise;
-      if (currentSettings?.id) {
-        promise = supabase
-          .from("system_settings")
-          .update({ ...newSettings, updated_at: new Date().toISOString() })
-          .eq("id", currentSettings.id);
-      } else {
-        promise = supabase
-          .from("system_settings")
-          .insert([{ ...newSettings, updated_at: new Date().toISOString() }]);
+      if (!isSupabaseConfigured) {
+        const updated = { ...currentSettings, ...newSettings, updated_at: new Date().toISOString() } as SystemSettings;
+        offlineDb.saveSettings(updated);
+        return updated;
       }
 
-      const { data, error } = await promise.select();
-      if (error) throw error;
-      return data[0] as SystemSettings;
+      try {
+        let promise;
+        if (currentSettings?.id && currentSettings.id !== "settings-default") {
+          promise = supabase
+            .from("system_settings")
+            .update({ ...newSettings, updated_at: new Date().toISOString() })
+            .eq("id", currentSettings.id);
+        } else {
+          promise = supabase
+            .from("system_settings")
+            .insert([{ ...newSettings, updated_at: new Date().toISOString() }]);
+        }
+
+        const { data, error } = await promise.select();
+        if (error) throw error;
+        return data[0] as SystemSettings;
+      } catch (err) {
+        console.warn("Supabase updateSettings failed, saving to local registry:", err);
+        const updated = { ...currentSettings, ...newSettings, updated_at: new Date().toISOString() } as SystemSettings;
+        offlineDb.saveSettings(updated);
+        return updated;
+      }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["system_settings"] }),
   });

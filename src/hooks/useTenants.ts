@@ -1,22 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { offlineDb, Tenant } from "@/lib/offlineDb";
 
-export type Tenant = {
-  id: string;
-  name: string;
-  contact_number?: string;
-  email?: string;
-  room_id?: string;
-  id_number?: string;
-  business_type?: string;
-  emergency_contact?: string;
-  lease_start?: string;
-  lease_end?: string;
-  notes?: string;
-  source?: 'direct' | 'airbnb';
-  status?: 'active' | 'archived' | 'evicted';
-  move_out_date?: string;
-};
+export type { Tenant };
 
 export type Document = {
   id: string;
@@ -33,91 +19,273 @@ export function useTenants() {
   const tenants = useQuery({
     queryKey: ["tenants"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("tenants").select("*").order("name");
-      if (error) throw error;
-      return data as Tenant[];
+      if (!isSupabaseConfigured) {
+        return offlineDb.getTenants().sort((a, b) => a.name.localeCompare(b.name));
+      }
+      try {
+        const { data, error } = await supabase.from("tenants").select("*").order("name");
+        if (error) throw error;
+        return data as Tenant[];
+      } catch (err) {
+        console.warn("Supabase fetchTenants error, falling back to local registry:", err);
+        return offlineDb.getTenants().sort((a, b) => a.name.localeCompare(b.name));
+      }
     },
+    retry: 1,
   });
 
   const addTenant = useMutation({
-    mutationFn: async (tenant: Omit<Tenant, "id">) => {
-      const { data, error } = await supabase.from("tenants").insert([tenant]).select();
-      if (error) throw error;
-      return data[0];
+    mutationFn: async (tenant: Omit<Tenant, "id" | "created_at">) => {
+      const newTenant: Tenant = {
+        ...tenant,
+        id: `t-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        status: tenant.status || 'active',
+      };
+
+      if (!isSupabaseConfigured) {
+        const current = offlineDb.getTenants();
+        offlineDb.saveTenants([...current, newTenant]);
+        
+        // Auto update room status to occupied in offlineDb
+        if (newTenant.room_id) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === newTenant.room_id ? { ...r, status: "occupied" as const } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
+        
+        return newTenant;
+      }
+
+      try {
+        const { data, error } = await supabase.from("tenants").insert([tenant]).select();
+        if (error) throw error;
+        return data[0];
+      } catch (err) {
+        console.warn("Supabase addTenant failed, fallback to local registry:", err);
+        const current = offlineDb.getTenants();
+        offlineDb.saveTenants([...current, newTenant]);
+        
+        if (newTenant.room_id) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === newTenant.room_id ? { ...r, status: "occupied" as const } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
+        
+        return newTenant;
+      }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
 
   const updateTenant = useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Tenant> & { id: string }) => {
-      const { data, error } = await supabase.from("tenants").update(updates).eq("id", id).select();
-      if (error) throw error;
-      return data[0];
+      if (!isSupabaseConfigured) {
+        const current = offlineDb.getTenants();
+        const oldTenant = current.find(t => t.id === id);
+        const updated = current.map(t => t.id === id ? { ...t, ...updates } as Tenant : t);
+        offlineDb.saveTenants(updated);
+
+        // Handle room reassignment updates in offlineDb
+        if (updates.room_id !== undefined && oldTenant?.room_id !== updates.room_id) {
+          const rooms = offlineDb.getRooms();
+          let updatedRooms = [...rooms];
+          if (oldTenant?.room_id) {
+            updatedRooms = updatedRooms.map(r => r.id === oldTenant.room_id ? { ...r, status: "vacant" as const } : r);
+          }
+          if (updates.room_id) {
+            updatedRooms = updatedRooms.map(r => r.id === updates.room_id ? { ...r, status: "occupied" as const } : r);
+          }
+          offlineDb.saveRooms(updatedRooms);
+        }
+
+        return updated.find(t => t.id === id);
+      }
+
+      try {
+        const { data, error } = await supabase.from("tenants").update(updates).eq("id", id).select();
+        if (error) throw error;
+        return data[0];
+      } catch (err) {
+        console.warn("Supabase updateTenant failed, fallback to local registry:", err);
+        const current = offlineDb.getTenants();
+        const oldTenant = current.find(t => t.id === id);
+        const updated = current.map(t => t.id === id ? { ...t, ...updates } as Tenant : t);
+        offlineDb.saveTenants(updated);
+
+        if (updates.room_id !== undefined && oldTenant?.room_id !== updates.room_id) {
+          const rooms = offlineDb.getRooms();
+          let updatedRooms = [...rooms];
+          if (oldTenant?.room_id) {
+            updatedRooms = updatedRooms.map(r => r.id === oldTenant.room_id ? { ...r, status: "vacant" as const } : r);
+          }
+          if (updates.room_id) {
+            updatedRooms = updatedRooms.map(r => r.id === updates.room_id ? { ...r, status: "occupied" as const } : r);
+          }
+          offlineDb.saveRooms(updatedRooms);
+        }
+
+        return updated.find(t => t.id === id);
+      }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
 
   const deleteTenant = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("tenants").delete().eq("id", id);
-      if (error) throw error;
+      if (!isSupabaseConfigured) {
+        const current = offlineDb.getTenants();
+        const oldTenant = current.find(t => t.id === id);
+        const remaining = current.filter(t => t.id !== id);
+        offlineDb.saveTenants(remaining);
+
+        if (oldTenant?.room_id) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === oldTenant.room_id ? { ...r, status: "vacant" as const } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
+        return;
+      }
+
+      try {
+        const { error } = await supabase.from("tenants").delete().eq("id", id);
+        if (error) throw error;
+      } catch (err) {
+        console.warn("Supabase deleteTenant failed, fallback to local registry:", err);
+        const current = offlineDb.getTenants();
+        const oldTenant = current.find(t => t.id === id);
+        const remaining = current.filter(t => t.id !== id);
+        offlineDb.saveTenants(remaining);
+
+        if (oldTenant?.room_id) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === oldTenant.room_id ? { ...r, status: "vacant" as const } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
+      }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
   
   const renewLease = useMutation({
     mutationFn: async ({ id, duration, unit }: { id: string, duration: 'days' | 'weeks' | 'months', unit: number }) => {
-      // 1. Get current tenant
-      const { data: tenant, error: fetchError } = await supabase.from("tenants").select("lease_end").eq("id", id).single();
-      if (fetchError) throw fetchError;
+      const calculateNewEnd = (leaseEndStr?: string) => {
+        const currentEnd = leaseEndStr ? new Date(leaseEndStr) : new Date();
+        const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
+        const newEnd = new Date(baseDate);
+        if (duration === 'days') newEnd.setDate(newEnd.getDate() + unit);
+        if (duration === 'weeks') newEnd.setDate(newEnd.getDate() + (unit * 7));
+        if (duration === 'months') newEnd.setMonth(newEnd.getMonth() + unit);
+        return newEnd.toISOString();
+      };
 
-      const currentEnd = tenant.lease_end ? new Date(tenant.lease_end) : new Date();
-      const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
-      
-      let newEnd = new Date(baseDate);
-      if (duration === 'days') newEnd.setDate(newEnd.getDate() + unit);
-      if (duration === 'weeks') newEnd.setDate(newEnd.getDate() + (unit * 7));
-      if (duration === 'months') newEnd.setMonth(newEnd.getMonth() + unit);
+      if (!isSupabaseConfigured) {
+        const current = offlineDb.getTenants();
+        const tenant = current.find(t => t.id === id);
+        const newEnd = calculateNewEnd(tenant?.lease_end);
+        const updated = current.map(t => t.id === id ? { ...t, lease_end: newEnd } as Tenant : t);
+        offlineDb.saveTenants(updated);
+        return updated.find(t => t.id === id);
+      }
 
-      const { data, error } = await supabase
-        .from("tenants")
-        .update({ lease_end: newEnd.toISOString() })
-        .eq("id", id)
-        .select();
-      
-      if (error) throw error;
-      return data[0];
+      try {
+        const { data: tenant, error: fetchError } = await supabase.from("tenants").select("lease_end").eq("id", id).single();
+        if (fetchError) throw fetchError;
+
+        const newEnd = calculateNewEnd(tenant.lease_end);
+
+        const { data, error } = await supabase
+          .from("tenants")
+          .update({ lease_end: newEnd })
+          .eq("id", id)
+          .select();
+        
+        if (error) throw error;
+        return data[0];
+      } catch (err) {
+        console.warn("Supabase renewLease failed, fallback to local registry:", err);
+        const current = offlineDb.getTenants();
+        const tenant = current.find(t => t.id === id);
+        const newEnd = calculateNewEnd(tenant?.lease_end);
+        const updated = current.map(t => t.id === id ? { ...t, lease_end: newEnd } as Tenant : t);
+        offlineDb.saveTenants(updated);
+        return updated.find(t => t.id === id);
+      }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
   });
 
   const uploadFile = useMutation({
     mutationFn: async ({ tenantId, file, name }: { tenantId: string; file: File; name: string }) => {
-      const path = `tenant-${tenantId}/${Date.now()}-${file.name}`;
-      const { error: uploadError } = await supabase.storage.from("documents").upload(path, file);
-      if (uploadError) throw uploadError;
+      const mockDoc: Document = {
+        id: `d-${Date.now()}`,
+        tenant_id: tenantId,
+        name,
+        file_path: `mock-docs/${file.name}`,
+        file_type: file.type,
+        created_at: new Date().toISOString(),
+      };
 
-      const { data, error: dbError } = await supabase.from("tenant_documents").insert([
-        { tenant_id: tenantId, name, file_path: path, file_type: file.type }
-      ]).select();
-      if (dbError) throw dbError;
-      return data[0];
+      if (!isSupabaseConfigured) {
+        const localDocs = JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]");
+        localStorage.setItem(`fana_documents_${tenantId}`, JSON.stringify([...localDocs, mockDoc]));
+        return mockDoc;
+      }
+
+      try {
+        const path = `tenant-${tenantId}/${Date.now()}-${file.name}`;
+        const { error: uploadError } = await supabase.storage.from("documents").upload(path, file);
+        if (uploadError) throw uploadError;
+
+        const { data, error: dbError } = await supabase.from("tenant_documents").insert([
+          { tenant_id: tenantId, name, file_path: path, file_type: file.type }
+        ]).select();
+        if (dbError) throw dbError;
+        return data[0];
+      } catch (err) {
+        console.warn("Supabase uploadFile failed, fallback to local registry:", err);
+        const localDocs = JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]");
+        localStorage.setItem(`fana_documents_${tenantId}`, JSON.stringify([...localDocs, mockDoc]));
+        return mockDoc;
+      }
     },
     onSuccess: (data) => queryClient.invalidateQueries({ queryKey: ["documents", data.tenant_id] }),
   });
 
   const deleteDocument = useMutation({
-    mutationFn: async ({ id, filePath }: { id: string; filePath: string }) => {
-      // Delete from storage
-      const { error: storageError } = await supabase.storage.from("documents").remove([filePath]);
-      if (storageError) throw storageError;
+    mutationFn: async ({ id, filePath, tenantId }: { id: string; filePath: string; tenantId?: string }) => {
+      if (!isSupabaseConfigured && tenantId) {
+        const localDocs = JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]") as Document[];
+        const remaining = localDocs.filter(d => d.id !== id);
+        localStorage.setItem(`fana_documents_${tenantId}`, JSON.stringify(remaining));
+        return;
+      }
 
-      // Delete from database
-      const { error: dbError } = await supabase.from("tenant_documents").delete().eq("id", id);
-      if (dbError) throw dbError;
+      try {
+        const { error: storageError } = await supabase.storage.from("documents").remove([filePath]);
+        if (storageError) throw storageError;
+
+        const { error: dbError } = await supabase.from("tenant_documents").delete().eq("id", id);
+        if (dbError) throw dbError;
+      } catch (err) {
+        console.warn("Supabase deleteDocument failed, fallback to local registry:", err);
+        if (tenantId) {
+          const localDocs = JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]") as Document[];
+          const remaining = localDocs.filter(d => d.id !== id);
+          localStorage.setItem(`fana_documents_${tenantId}`, JSON.stringify(remaining));
+        }
+      }
     },
     onSuccess: (_, variables) => {
-      // Try to invalidate generically, or if tenantId isn't easily available, just invalidate all docs
       queryClient.invalidateQueries({ queryKey: ["documents"] });
     },
   });
@@ -125,44 +293,97 @@ export function useTenants() {
   const documents = (tenantId: string) => useQuery({
     queryKey: ["documents", tenantId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("tenant_documents").select("*").eq("tenant_id", tenantId);
-      if (error) throw error;
-      return data as Document[];
+      if (!isSupabaseConfigured) {
+        return JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]") as Document[];
+      }
+      try {
+        const { data, error } = await supabase.from("tenant_documents").select("*").eq("tenant_id", tenantId);
+        if (error) throw error;
+        return data as Document[];
+      } catch (err) {
+        console.warn("Supabase fetchDocuments error, falling back to local registry:", err);
+        return JSON.parse(localStorage.getItem(`fana_documents_${tenantId}`) || "[]") as Document[];
+      }
     },
     enabled: !!tenantId,
+    retry: 1,
   });
 
   const checkoutTenant = useMutation({
     mutationFn: async ({ id, roomStatus }: { id: string; roomStatus: 'vacant' | 'maintenance' }) => {
-      // 1. Get the tenant's current room_id before we unassign
-      const { data: tenant, error: fetchError } = await supabase
-        .from("tenants")
-        .select("room_id")
-        .eq("id", id)
-        .single();
-      if (fetchError) throw fetchError;
+      if (!isSupabaseConfigured) {
+        const current = offlineDb.getTenants();
+        const tenant = current.find(t => t.id === id);
+        const previousRoomId = tenant?.room_id;
 
-      const previousRoomId = tenant?.room_id;
-
-      // 2. Archive the tenant: unassign room, set status, record move-out date
-      const { error: updateError } = await supabase
-        .from("tenants")
-        .update({
+        const updated = current.map(t => t.id === id ? {
+          ...t,
           room_id: null,
-          status: 'archived',
+          status: 'archived' as const,
           move_out_date: new Date().toISOString(),
           lease_end: new Date().toISOString(),
-        })
-        .eq("id", id);
-      if (updateError) throw updateError;
+        } : t);
+        offlineDb.saveTenants(updated);
 
-      // 3. Explicitly set the room status (in case the trigger doesn't cover the chosen status)
-      if (previousRoomId) {
-        const { error: roomError } = await supabase
-          .from("rooms")
-          .update({ status: roomStatus })
-          .eq("id", previousRoomId);
-        if (roomError) throw roomError;
+        if (previousRoomId) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === previousRoomId ? { ...r, status: roomStatus } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
+        return;
+      }
+
+      try {
+        // 1. Get the tenant's current room_id before we unassign
+        const { data: tenant, error: fetchError } = await supabase
+          .from("tenants")
+          .select("room_id")
+          .eq("id", id)
+          .single();
+        if (fetchError) throw fetchError;
+
+        const previousRoomId = tenant?.room_id;
+
+        // 2. Archive the tenant: unassign room, set status, record move-out date
+        const { error: updateError } = await supabase
+          .from("tenants")
+          .update({
+            room_id: null,
+            status: 'archived',
+            move_out_date: new Date().toISOString(),
+            lease_end: new Date().toISOString(),
+          })
+          .eq("id", id);
+        if (updateError) throw updateError;
+
+        // 3. Explicitly set the room status
+        if (previousRoomId) {
+          const { error: roomError } = await supabase
+            .from("rooms")
+            .update({ status: roomStatus })
+            .eq("id", previousRoomId);
+          if (roomError) throw roomError;
+        }
+      } catch (err) {
+        console.warn("Supabase checkoutTenant failed, fallback to local registry:", err);
+        const current = offlineDb.getTenants();
+        const tenant = current.find(t => t.id === id);
+        const previousRoomId = tenant?.room_id;
+
+        const updated = current.map(t => t.id === id ? {
+          ...t,
+          room_id: null,
+          status: 'archived' as const,
+          move_out_date: new Date().toISOString(),
+          lease_end: new Date().toISOString(),
+        } : t);
+        offlineDb.saveTenants(updated);
+
+        if (previousRoomId) {
+          const rooms = offlineDb.getRooms();
+          const updatedRooms = rooms.map(r => r.id === previousRoomId ? { ...r, status: roomStatus } : r);
+          offlineDb.saveRooms(updatedRooms);
+        }
       }
     },
     onSuccess: () => {
