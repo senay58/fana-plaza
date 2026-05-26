@@ -28,6 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (passcode: string) => {
     try {
+      if (!isSupabaseConfigured) throw new Error("Supabase unconfigured");
       // 1. Attempt DB check
       const { data, error } = await supabase
         .from("system_settings")
@@ -43,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (masterPasscode === passcode) {
         localStorage.setItem(SESSION_KEY, "authorized");
+        localStorage.setItem("operating_mode", "online");
         setIsAuthenticated(true);
         toast.success("Registry Uplink Secured. Welcome, Manager.");
         return true;
@@ -56,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const localPasscode = offlineDb.getSettings().passcode || "1234";
       if (passcode === localPasscode || passcode === "1234") {
         localStorage.setItem(SESSION_KEY, "authorized");
+        localStorage.setItem("operating_mode", "local");
         setIsAuthenticated(true);
         toast.warning("Manual Override Successful. Operating in local-only mode.");
         return true;
@@ -67,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem("operating_mode");
     setIsAuthenticated(false);
     toast.info("Session Terminated. Uplink Offline.");
   };
