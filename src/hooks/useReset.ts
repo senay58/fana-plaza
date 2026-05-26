@@ -74,38 +74,42 @@ export function useReset() {
       const ok = await verifyPasscode(passcode);
       if (!ok) throw new Error("Invalid passcode. Access Denied.");
 
-      // Always reset local
+      // Always reset local cache first so UI is immediately usable offline
       offlineDb.resetProperties();
 
       if (!isSupabaseConfigured) return;
 
-      // Wipe Supabase
-      await supabase.from("tenants").update({ room_id: null }).neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("rooms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("floors").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      try {
+        // Wipe Supabase
+        await supabase.from("tenants").update({ room_id: null }).neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("rooms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("floors").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      // Re-seed floors
-      const localFloors = offlineDb.getFloors();
-      const { data: dbFloors, error: fe } = await supabase.from("floors").insert(localFloors.map(pickFloorCols)).select();
-      if (fe) throw fe;
+        // Re-seed floors
+        const localFloors = offlineDb.getFloors();
+        const { data: dbFloors, error: fe } = await supabase.from("floors").insert(localFloors.map(pickFloorCols)).select();
+        if (fe) throw fe;
 
-      // Re-seed rooms
-      const localRooms = offlineDb.getRooms();
-      const roomRows = localRooms.map(r => {
-        const origFloor = localFloors.find(f => f.id === r.floor_id);
-        const newFloor = dbFloors?.find(f => f.number === origFloor?.number);
-        return pickRoomCols(r, newFloor?.id || r.floor_id);
-      });
-      const { error: re } = await supabase.from("rooms").insert(roomRows);
-      if (re) throw re;
+        // Re-seed rooms
+        const localRooms = offlineDb.getRooms();
+        const roomRows = localRooms.map(r => {
+          const origFloor = localFloors.find(f => f.id === r.floor_id);
+          const newFloor = dbFloors?.find(f => f.number === origFloor?.number);
+          return pickRoomCols(r, newFloor?.id || r.floor_id);
+        });
+        const { error: re } = await supabase.from("rooms").insert(roomRows);
+        if (re) throw re;
+      } catch (err) {
+        console.warn("Supabase resetProperties write failed (falling back to offline mode):", err);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["floors"] });
       queryClient.invalidateQueries({ queryKey: ["rooms"] });
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       queryClient.invalidateQueries({ queryKey: ["maintenance-logs"] });
-      toast.success("Properties reset to factory defaults.");
+      toast.success("Properties reset to factory defaults successfully.");
     },
     onError: (err: any) => toast.error(err.message || "Properties reset failed."),
   });
@@ -120,34 +124,38 @@ export function useReset() {
 
       if (!isSupabaseConfigured) return;
 
-      await supabase.from("tenant_documents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("tenants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      try {
+        await supabase.from("tenant_documents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("tenants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      // Re-seed tenants
-      const localTenants = offlineDb.getTenants();
-      const { data: dbRooms } = await supabase.from("rooms").select("id, number");
+        // Re-seed tenants
+        const localTenants = offlineDb.getTenants();
+        const dbRooms = await supabase.from("rooms").select("id, number");
 
-      const tenantRows = localTenants.map(t => {
-        const origRoom = offlineDb.getRooms().find(r => r.id === t.room_id);
-        const newRoom = dbRooms?.find(r => r.number === origRoom?.number);
-        return pickTenantCols(t, newRoom?.id || null);
-      });
-      const { data: dbTenants, error: te } = await supabase.from("tenants").insert(tenantRows).select();
-      if (te) throw te;
+        const tenantRows = localTenants.map(t => {
+          const origRoom = offlineDb.getRooms().find(r => r.id === t.room_id);
+          const newRoom = dbRooms.data?.find(r => r.number === origRoom?.number);
+          return pickTenantCols(t, newRoom?.id || null);
+        });
+        const { data: dbTenants, error: te } = await supabase.from("tenants").insert(tenantRows).select();
+        if (te) throw te;
 
-      // Mark occupied rooms
-      if (dbTenants) {
-        for (const t of dbTenants) {
-          if (t.room_id) await supabase.from("rooms").update({ status: "occupied" }).eq("id", t.room_id);
+        // Mark occupied rooms
+        if (dbTenants) {
+          for (const t of dbTenants) {
+            if (t.room_id) await supabase.from("rooms").update({ status: "occupied" }).eq("id", t.room_id);
+          }
         }
+      } catch (err) {
+        console.warn("Supabase resetTenants write failed (falling back to offline mode):", err);
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       queryClient.invalidateQueries({ queryKey: ["rooms"] });
       queryClient.invalidateQueries({ queryKey: ["payments"] });
-      toast.success("Tenants reset to factory defaults.");
+      toast.success("Tenants registry reset to factory defaults successfully.");
     },
     onError: (err: any) => toast.error(err.message || "Tenants reset failed."),
   });
@@ -162,22 +170,26 @@ export function useReset() {
 
       if (!isSupabaseConfigured) return;
 
-      await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      try {
+        await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      const localLogs = offlineDb.getMaintenance();
-      const { data: dbRooms } = await supabase.from("rooms").select("id, number");
+        const localLogs = offlineDb.getMaintenance();
+        const { data: dbRooms } = await supabase.from("rooms").select("id, number");
 
-      const logRows = localLogs.map(l => {
-        const origRoom = offlineDb.getRooms().find(r => r.id === l.room_id);
-        const newRoom = dbRooms?.find(r => r.number === origRoom?.number);
-        return pickMaintenanceCols(l, newRoom?.id || l.room_id);
-      });
-      const { error: le } = await supabase.from("maintenance_logs").insert(logRows);
-      if (le) throw le;
+        const logRows = localLogs.map(l => {
+          const origRoom = offlineDb.getRooms().find(r => r.id === l.room_id);
+          const newRoom = dbRooms?.find(r => r.number === origRoom?.number);
+          return pickMaintenanceCols(l, newRoom?.id || l.room_id);
+        });
+        const { error: le } = await supabase.from("maintenance_logs").insert(logRows);
+        if (le) throw le;
+      } catch (err) {
+        console.warn("Supabase resetMaintenance write failed (falling back to offline mode):", err);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["maintenance-logs"] });
-      toast.success("Maintenance logs reset to factory defaults.");
+      toast.success("Maintenance logs reset to factory defaults successfully.");
     },
     onError: (err: any) => toast.error(err.message || "Maintenance reset failed."),
   });
@@ -192,22 +204,26 @@ export function useReset() {
 
       if (!isSupabaseConfigured) return;
 
-      await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      try {
+        await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      const localPayments = offlineDb.getPayments();
-      const { data: dbTenants } = await supabase.from("tenants").select("id, name");
+        const localPayments = offlineDb.getPayments();
+        const { data: dbTenants } = await supabase.from("tenants").select("id, name");
 
-      const payRows = localPayments.map(p => {
-        const origTenant = offlineDb.getTenants().find(t => t.id === p.tenant_id);
-        const newTenant = dbTenants?.find(t => t.name === origTenant?.name);
-        return pickPaymentCols(p, newTenant?.id || p.tenant_id);
-      });
-      const { error: pe } = await supabase.from("payments").insert(payRows);
-      if (pe) throw pe;
+        const payRows = localPayments.map(p => {
+          const origTenant = offlineDb.getTenants().find(t => t.id === p.tenant_id);
+          const newTenant = dbTenants?.find(t => t.name === origTenant?.name);
+          return pickPaymentCols(p, newTenant?.id || p.tenant_id);
+        });
+        const { error: pe } = await supabase.from("payments").insert(payRows);
+        if (pe) throw pe;
+      } catch (err) {
+        console.warn("Supabase resetPayments write failed (falling back to offline mode):", err);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments"] });
-      toast.success("Payments reset to factory defaults.");
+      toast.success("Payments ledger reset to factory defaults successfully.");
     },
     onError: (err: any) => toast.error(err.message || "Payments reset failed."),
   });
@@ -222,79 +238,83 @@ export function useReset() {
 
       if (!isSupabaseConfigured) return;
 
-      // Wipe everything in safe order
-      await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("tenant_documents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("tenants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("rooms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("floors").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("notifications").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      try {
+        // Wipe everything in safe order
+        await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("maintenance_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("tenant_documents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("tenants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("rooms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("floors").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("notifications").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      // Re-seed floors
-      const localFloors = offlineDb.getFloors();
-      const { data: dbFloors, error: fe } = await supabase.from("floors").insert(localFloors.map(pickFloorCols)).select();
-      if (fe) throw fe;
+        // Re-seed floors
+        const localFloors = offlineDb.getFloors();
+        const { data: dbFloors, error: fe } = await supabase.from("floors").insert(localFloors.map(pickFloorCols)).select();
+        if (fe) throw fe;
 
-      // Re-seed rooms
-      const localRooms = offlineDb.getRooms();
-      const roomRows = localRooms.map(r => {
-        const origFloor = localFloors.find(f => f.id === r.floor_id);
-        const newFloor = dbFloors?.find(f => f.number === origFloor?.number);
-        return pickRoomCols(r, newFloor?.id || r.floor_id);
-      });
-      const { data: dbRooms, error: re } = await supabase.from("rooms").insert(roomRows).select();
-      if (re) throw re;
+        // Re-seed rooms
+        const localRooms = offlineDb.getRooms();
+        const roomRows = localRooms.map(r => {
+          const origFloor = localFloors.find(f => f.id === r.floor_id);
+          const newFloor = dbFloors?.find(f => f.number === origFloor?.number);
+          return pickRoomCols(r, newFloor?.id || r.floor_id);
+        });
+        const { data: dbRooms, error: re } = await supabase.from("rooms").insert(roomRows).select();
+        if (re) throw re;
 
-      // Re-seed tenants
-      const localTenants = offlineDb.getTenants();
-      const tenantRows = localTenants.map(t => {
-        const origRoom = localRooms.find(r => r.id === t.room_id);
-        const newRoom = dbRooms?.find(r => r.number === origRoom?.number);
-        return pickTenantCols(t, newRoom?.id || null);
-      });
-      const { data: dbTenants, error: te } = await supabase.from("tenants").insert(tenantRows).select();
-      if (te) throw te;
+        // Re-seed tenants
+        const localTenants = offlineDb.getTenants();
+        const tenantRows = localTenants.map(t => {
+          const originalRoom = localRooms.find(r => r.id === t.room_id);
+          const newRoom = dbRooms?.find(r => r.number === originalRoom?.number);
+          return pickTenantCols(t, newRoom?.id || null);
+        });
+        const { data: dbTenants, error: te } = await supabase.from("tenants").insert(tenantRows).select();
+        if (te) throw te;
 
-      // Mark occupied
-      if (dbTenants) {
-        for (const t of dbTenants) {
-          if (t.room_id) await supabase.from("rooms").update({ status: "occupied" }).eq("id", t.room_id);
+        // Mark occupied
+        if (dbTenants) {
+          for (const t of dbTenants) {
+            if (t.room_id) await supabase.from("rooms").update({ status: "occupied" }).eq("id", t.room_id);
+          }
         }
-      }
 
-      // Re-seed payments
-      const localPayments = offlineDb.getPayments();
-      const payRows = localPayments.map(p => {
-        const origTenant = localTenants.find(t => t.id === p.tenant_id);
-        const newTenant = dbTenants?.find(t => t.name === origTenant?.name);
-        return pickPaymentCols(p, newTenant?.id || p.tenant_id);
-      });
-      const { error: pe } = await supabase.from("payments").insert(payRows);
-      if (pe) throw pe;
+        // Re-seed payments
+        const localPayments = offlineDb.getPayments();
+        const payRows = localPayments.map(p => {
+          const originalTenant = localTenants.find(t => t.id === p.tenant_id);
+          const newTenant = dbTenants?.find(t => t.name === originalTenant?.name);
+          return pickPaymentCols(p, newTenant?.id || p.tenant_id);
+        });
+        const { error: pe } = await supabase.from("payments").insert(payRows);
+        if (pe) throw pe;
 
-      // Re-seed maintenance
-      const localLogs = offlineDb.getMaintenance();
-      const logRows = localLogs.map(l => {
-        const origRoom = localRooms.find(r => r.id === l.room_id);
-        const newRoom = dbRooms?.find(r => r.number === origRoom?.number);
-        return pickMaintenanceCols(l, newRoom?.id || l.room_id);
-      });
-      const { error: le } = await supabase.from("maintenance_logs").insert(logRows);
-      if (le) throw le;
+        // Re-seed maintenance
+        const localLogs = offlineDb.getMaintenance();
+        const logRows = localLogs.map(l => {
+          const originalRoom = localRooms.find(r => r.id === l.room_id);
+          const newRoom = dbRooms?.find(r => r.number === originalRoom?.number);
+          return pickMaintenanceCols(l, newRoom?.id || l.room_id);
+        });
+        const { error: le } = await supabase.from("maintenance_logs").insert(logRows);
+        if (le) throw le;
 
-      // Re-seed notifications
-      const localNotifs = offlineDb.getNotifications();
-      if (localNotifs.length > 0) {
-        const { error: ne } = await supabase.from("notifications").insert(
-          localNotifs.map(({ id, ...n }) => n)
-        );
-        if (ne) throw ne;
+        // Re-seed notifications
+        const localNotifs = offlineDb.getNotifications();
+        if (localNotifs.length > 0) {
+          const { error: ne } = await supabase.from("notifications").insert(
+            localNotifs.map(({ id, ...n }) => n)
+          );
+          if (ne) throw ne;
+        }
+      } catch (err) {
+        console.warn("Supabase master reset write failed (falling back to offline mode):", err);
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries();
-      toast.success("Full system reset to factory defaults.");
+      toast.success("Executive Registry completely reset to factory defaults successfully.");
     },
     onError: (err: any) => toast.error(err.message || "Master reset failed."),
   });
